@@ -40,11 +40,14 @@ export default function AppHeader({ toggleDesktopSidebar, isSidebarOpen, setIsMo
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => setIsMobileSidebarOpen(true)} // Open mobile sheet
+          onClick={() => {
+            console.log("Opening mobile sidebar");
+            setIsMobileSidebarOpen(true);
+          }}
           aria-label="Open mobile sidebar"
-          className="text-gray-600 hover:bg-blue-50 hover:text-blue-700 rounded-lg md:hidden mr-4" // Visible on mobile
+          className="text-gray-700 hover:bg-indigo-50 hover:text-indigo-700 rounded-lg md:hidden mr-3 transition-colors duration-200"
         >
-          <Menu size={24} />
+          <Menu size={24} strokeWidth={2.5} />
         </Button>
 
         <h1 className="text-xl font-bold text-gray-800 ml-0 md:ml-4">Purchase Management</h1> {/* Adjusted ml */}

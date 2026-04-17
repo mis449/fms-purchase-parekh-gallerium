@@ -18,7 +18,7 @@ import KycPage from "./components/KycPage";
 import VendorPaymentPage from "./components/VendorPaymentPage";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import {
   LayoutDashboard, FilePlus, PackageCheck, FileText, Calculator,
   Truck, CheckSquare, Menu, X, Database, Loader2, RotateCcw, Settings, Users
@@ -219,15 +219,28 @@ function App() {
 
       {/* Mobile Sidebar */}
       <Sheet open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
-        <SheetContent side="left" className="p-0 flex flex-col w-60 relative">
-          {/* Mobile Header */}
-          <div className="h-16 flex items-center border-b border-gray-200 px-4 justify-start flex-shrink-0 bg-white z-10">
+        <SheetContent side="left" className="p-0 flex flex-col w-[280px] sm:w-[320px] bg-white border-r border-gray-200">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Mobile Navigation Menu</SheetTitle>
+            <SheetDescription>
+              Access different sections of the Purchase Management system
+            </SheetDescription>
+          </SheetHeader>
+          <div className="h-16 flex items-center border-b border-gray-200 px-6 justify-between flex-shrink-0 bg-white sticky top-0 z-10">
             <span className="font-bold text-xl bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">
               Purchase Management
             </span>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={() => setIsMobileSidebarOpen(false)}
+              className="md:hidden text-gray-500 hover:bg-gray-100 rounded-full"
+            >
+              <X size={20} />
+            </Button>
           </div>
           {/* Mobile Sidebar Content */}
-          <div className="flex-1">
+          <div className="flex-1 overflow-hidden">
             {renderSidebarContent(true)}
           </div>
         </SheetContent>
