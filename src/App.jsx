@@ -24,25 +24,43 @@ import {
   Truck, CheckSquare, Menu, X, Database, Loader2, RotateCcw, Settings, Users
 } from 'lucide-react';
 import { Toaster } from "@/components/ui/sonner";
+import { useLocation, useNavigate } from "react-router-dom";
 
 function App() {
   const { isAuthenticated, allowedSteps } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("dashboard");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
+  // Map URL paths to tab IDs
+  const pathToTabMap = {
+    "/": "dashboard",
+    "/indent": "indent",
+    "/stock": "stock",
+    "/generate-po": "generate-po",
+    "/tally-entry": "tally-entry",
+    "/lift-material": "lift-material",
+    "/receipt-check": "receipt-check",
+    "/arrange-logistics": "lift-material", // Map both to same tab
+    "/accounts": "accounts",
+    "/purchase-return": "purchase-return",
+    "/users": "users",
+  };
+
   const allTabs = [
-    { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={20} />, stepName: "Dashboard" },
-    { id: "indent", label: "Indent", icon: <FilePlus size={20} />, stepName: "Generate Indent" },
-    { id: "stock", label: "Stock", icon: <PackageCheck size={20} />, stepName: "Recheck the Stock And Approve Quantity" },
-    { id: "generate-po", label: "PO", icon: <FileText size={20} />, stepName: "Generate Purchase Order" },
-    { id: "tally-entry", label: "Tally", icon: <Calculator size={20} />, stepName: "Purchase Order Entry In Tally" },
-    { id: "lift-material", label: "Lift", icon: <Truck size={20} />, stepName: "Lift The Material" },
-    { id: "receipt-check", label: "Receipt", icon: <CheckSquare size={20} />, stepName: "Receipt Of Material / Physical Quality Check" },
+    { id: "dashboard", label: "Dashboard", icon: <LayoutDashboard size={20} />, stepName: "Dashboard", path: "/" },
+    { id: "indent", label: "Indent", icon: <FilePlus size={20} />, stepName: "Generate Indent", path: "/indent" },
+    { id: "stock", label: "Stock", icon: <PackageCheck size={20} />, stepName: "Recheck the Stock And Approve Quantity", path: "/stock" },
+    { id: "generate-po", label: "PO", icon: <FileText size={20} />, stepName: "Generate Purchase Order", path: "/generate-po" },
+    { id: "tally-entry", label: "Tally", icon: <Calculator size={20} />, stepName: "Purchase Order Entry In Tally", path: "/tally-entry" },
+    { id: "lift-material", label: "Lift", icon: <Truck size={20} />, stepName: "Lift The Material", path: "/lift-material" },
+    { id: "receipt-check", label: "Receipt", icon: <CheckSquare size={20} />, stepName: "Receipt Of Material / Physical Quality Check", path: "/receipt-check" },
     // Individual Accounts Pages
-    { id: "accounts", label: "Accounts", icon: <Database size={20} />, stepName: "accounts" },
-    { id: "purchase-return", label: "Return", icon: <RotateCcw size={20} />, stepName: "purchase-returns" },
-    { id: "users", label: "Users", icon: <Users size={20} />, stepName: "admin" }
+    { id: "accounts", label: "Accounts", icon: <Database size={20} />, stepName: "accounts", path: "/accounts" },
+    { id: "purchase-return", label: "Return", icon: <RotateCcw size={20} />, stepName: "purchase-returns", path: "/purchase-return" },
+    { id: "users", label: "Users", icon: <Users size={20} />, stepName: "admin", path: "/users" }
   ];
 
   const accessibleTabs = allTabs.filter(tab =>
@@ -50,6 +68,23 @@ function App() {
     allowedSteps.includes("admin") ||
     allowedSteps.includes(tab.stepName?.toLowerCase())
   );
+
+  // Sync activeTab with URL
+  useEffect(() => {
+    const tabId = pathToTabMap[location.pathname];
+    if (tabId && tabId !== activeTab) {
+      setActiveTab(tabId);
+    }
+  }, [location.pathname]);
+
+  // Sync URL with activeTab (from sidebar interaction)
+  useEffect(() => {
+    const currentPath = allTabs.find(t => t.id === activeTab)?.path || "/";
+    if (location.pathname !== currentPath && currentPath !== "/arrange-logistics") {
+       // Only navigate if path is different (avoid infinite loops)
+       // navigate(currentPath);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

@@ -206,7 +206,7 @@ export default function Dashboard() {
         date: parseDateFromDB(row.Timestamp),
         rlNo: row["Indent Id."] || row["RL No."], // Handle both if needed
         firmName: row["Firm Name"],
-        vendorName: row["Vendor"] || row["Vendor Name"],
+        vendorName: row["Vendor"] || row["Vendor name"] || row["Vendor Name"],
         material: row["Material"] || row["Product Select"],
         poQty: Number.parseFloat(row["Total Quantity"] || row["Total PO Qty"]) || 0,
         poTimestamp: row["Timestamp 2"],

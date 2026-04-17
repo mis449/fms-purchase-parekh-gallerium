@@ -1,1304 +1,1309 @@
-"use client";
-import React, { useState, useEffect, useMemo, useCallback, useContext } from "react";
-import { FileCheck, Loader2, Upload, Wallet, Filter, Link as LinkIcon, File, History, Info, AlertTriangle } from 'lucide-react';
-import { MixerHorizontalIcon } from '@radix-ui/react-icons';
-import "../scrollbar-hide.css";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
+import React, { useContext, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { FilePlus2, Pencil, Save, Trash, Eye } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Input } from "./ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "./ui/table";
+import { Button } from "./ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { ScrollArea } from "./ui/scroll-area";
+import { Search } from "lucide-react";
+
+
+import { Textarea } from "./ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Label } from "./ui/label";
+import { pdf, PDFViewer } from "@react-pdf/renderer";
+import { ClipLoader as Loader } from "react-spinners";
 import { toast } from "sonner";
+import POPdf from "./POPdf";
 import { AuthContext } from "../context/AuthContext";
 import { supabase } from "../lib/supabase";
+import { uploadFileToStorage } from "../utils/storageUtils";
+import { useRealtime } from "../hooks/useRealtime";
+import { canViewFirm } from "../utils/firmFilter";
+import companyLogo from "../assets/logo.jpeg";
 
-// Constants
-// Supabase Table
-const INDENT_PO_TABLE = "INDENT-PO";
 
-// Column mappings (Internal key to Supabase Column Name)
-const SUPABASE_COLUMNS = {
-  id: "Indent Id.",
-  firmName: "Firm Name",
-  vendorName: "Vendor",
-  rawMaterialName: "Material",
-  typeOfIndent: "Priority",
-  approvedQty: "Approved Qty",
-  planned: "Planned2",
-  poTimestamp: "Actual2",
-  haveToPO: "Have To Make PO",
-  rate: "Rate",
-  leadTimeToLift: "Lead Time To Lift (days)",
-  totalQty: "Total Quantity",
-  totalAmount: "Total Amount",
-  poFile: "PO Copy",
-  advanceToBePaid: "Advance To Be Paid",
-  toBePaidAmount: "To Be Paid Amount",
-  whenToBePaid: "When To Be Paid Amount",
-  notes: "PO Notes",
-  alumina: "Alumina",
-  iron: "Iron",
+
+const DEFAULT_TERMS = [
+  "Price is ex factory",
+  "Subject to Raipur Jurisdiction",
+  "Payment: 1 Day",
+];
+
+const TRANSPORT_TYPE_OPTIONS = ["FOR", "Ex-Factory"];
+//there some comment
+const defaultForm = () => ({
+  poNumber: "",
+  poDate: new Date().toISOString().split("T")[0],
+  supplierName: "",
+  supplierAddress: "",
+  gstin: "",
+  companyEmail: "",
+  quotationNumber: "",
+  quotationDate: new Date().toISOString().split("T")[0],
+  deliveryDate: new Date().toISOString().split("T")[0],
+  paymentTerms: "1 DAY",
+  description: "",
+  notes: "",
+  destination: "",
+  transportType: "",
+  advanceToBePaid: "no",
+  toBePaidAmount: "",
+  whenToBePaid: "",
+  terms: [...DEFAULT_TERMS],
+  indents: [],
+});
+
+const normalize = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+const toDateInput = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value.split("T")[0].split(" ")[0];
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().split("T")[0];
+};
+const formatDate = (value) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value || ""
+    : new Intl.DateTimeFormat("en-GB").format(date);
+};
+const lineBase = (item) =>
+  (Number(item.quantity) || 0) * (Number(item.rate) || 0);
+const taxable = (item) =>
+  lineBase(item) - (lineBase(item) * (Number(item.discountPercent) || 0)) / 100;
+const lineGst = (item) =>
+  (taxable(item) * (Number(item.gstPercent) || 0)) / 100;
+const lineTotal = (item) => taxable(item) + lineGst(item);
+const sumBy = (items, fn) => items.reduce((sum, item) => sum + fn(item), 0);
+const money = (value) =>
+  Number(value || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2, 
+    maximumFractionDigits: 2,
+  });
+const generatePoNumber = (rows, firm) => {
+  const prefix = firm?.po_prefix || "PMMPL/PO/25-26/";
+  const baseCount = firm?.last_po_id || 2554;
+  const uniquePos = new Set(rows?.filter((row) => row.poNumber).map(row => row.poNumber));
+  return `${prefix}${baseCount + uniquePos.size + 1}`;
 };
 
-// Mock data for filters
-const vendorOptions = ["Devid", "Karan", "Sanjay", "Vinod", "Purab"];
-const materialOptions = ["Fabrics", "Minerals", "Iron", "Steel"];
-const firmOptions = ["Purab", "Rkl", "Prmmpl", "PMMPL"];
+const mapRow = (row) => ({
+  id: row["Indent Id."],
+  firmName: row["Firm Name"] || "",
+  vendorName: row["Vendor"] || row["Vendor name"] || row["Vendor Name"] || "",
+  rawMaterialName: row["Material"] || "",
+  approvedQty: Number(row["Approved Qty"] || 0),
+  approvedRate: Number(row["Approved Rate"] || row["Rate"] || 0),
+  quotationNumber: row["Quotation Number 1"] || "",
+  quotationDate: toDateInput(row["Quotation Date 1"]),
+  poTimestamp: row["Actual2"] || "",
+  planned: row["Planned2"] || "",
+  notes: row["PO Notes"] || row["Notes"] || "",
+  supplierAddress: row["Vendor Address"] || row["Address"] || "",
+  supplierGstin: row["GST Number"] || row["GSTIN"] || "",
+  supplierEmail: row["Email"] || "",
+  alumina: row["Alumina %"] || "",
+  iron: row["Iron %"] || "",
+  sio2: row["SiO2 %"] || "",
+  cao: row["CaO %"] || "",
+  ap: row["AP Percent Age %"] || "",
+  bd: row["BD Percent Age %"] || "",
+  fineness: row["Fineness"] || "",
+  packaging: row["Packaging"] || "",
+  poFile: row["PO Copy"] || "",
+  advanceToBePaid: row["Advance To Be Paid"] || "",
+  toBePaidAmount: row["To Be Paid Amount"] || "",
+  whenToBePaid: toDateInput(row["When To Be Paid Amount"]),
+  transportType: row["Transport Type"] || "",
+  dest: row["destination"] || "",
+  poDate: toDateInput(row["Actual2"]),
+  deliveryDate: toDateInput(row["Lead Time To Lift (days)"]),
+  poNumber: row["po_number"] || "",
+});
 
-const GeneratePurchaseOrder = () => {
+
+
+const groupByVendor = (rows) => {
+  const groups = rows.reduce((acc, row) => {
+    const key = row.vendorName || "Unknown Vendor";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(row);
+    return acc;
+  }, {});
+  return Object.entries(groups).map(([vendorName, indents]) => ({
+    vendorName,
+    indents,
+    totalItems: indents.length,
+    totalQuantity: sumBy(indents, (item) => Number(item.approvedQty) || 0),
+  }));
+};
+
+export default function CreatePO() {
+  const navigate = useNavigate();
   const { user } = useContext(AuthContext);
-  const [filters, setFilters] = useState({
-    vendorName: "all",
-    rawMaterialName: "all",
-    firmName: "all"
-  });
-
-  // States for Generate PO
-  const [indents, setIndents] = useState([]);
-  const [purchaseOrders, setPurchaseOrders] = useState([]);
-  const [selectedIndent, setSelectedIndent] = useState(null);
+  const [mode, setMode] = useState("create");
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [error, setError] = useState(null);
-  const [haveToPO, setHaveToPO] = useState("");
-  const [poErrors, setPoErrors] = useState({});
-
-  // States for Advance Payment Tab
-  const [indentData, setIndentData] = useState([]); // This holds the raw data for advance payments
-  const [selectedPaymentIndent, setSelectedPaymentIndent] = useState(null);
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
-  const [showPaymentPopup, setShowPaymentPopup] = useState(false);
-  const [paymentError, setPaymentError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
+  const [termEditIndex, setTermEditIndex] = useState(-1);
+  const [editDestination, setEditDestination] = useState(false);
+  const [formData, setFormData] = useState(defaultForm());
+  const [firms, setFirms] = useState([]);
+  const [selectedFirm, setSelectedFirm] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [poPopoverOpen, setPoPopoverOpen] = useState(false);
 
-  // Form state for Generate PO
-  const [formData, setFormData] = useState({
-    indentId: "",
-    quantity: "",
-    rate: "",
-    leadTimeToLift: "",
-    totalQty: "",
-    totalAmount: "",
-    advanceToBePaid: "",
-    toBePaidAmount: "",
-    whenToBePaid: "",
-    notes: "",
-    poFile: null,
-    alumina: "",
-    iron: "",
-  });
 
-  // Form state for Advance Payment
-  const [paymentFormData, setPaymentFormData] = useState({ amount: "", paymentDate: "" });
-  const [paymentFormErrors, setPaymentFormErrors] = useState({});
+  const [masterData, setMasterData] = useState([]);
 
-  // Column visibility states
-  const [visibleIndentColumns, setVisibleIndentColumns] = useState({});
-  const [visiblePoColumns, setVisiblePoColumns] = useState({});
-  const [visiblePaymentColumns, setVisiblePaymentColumns] = useState({});
-  const [activeTab, setActiveTab] = useState("approve");
-
-  // Column definitions for display tables
-  const allIndentColumnsMeta = useMemo(() => ([
-    { header: "Indent ID", dataKey: "id", toggleable: true, alwaysVisible: true },
-    { header: "Firm Name", dataKey: "firmName", toggleable: true },
-    { header: "Vendor Name", dataKey: "vendorName", toggleable: true },
-    { header: "Raw Material", dataKey: "rawMaterialName", toggleable: true },
-    { header: "Approved Qty", dataKey: "approvedQty", toggleable: true },
-    { header: "Type", dataKey: "typeOfIndent", toggleable: true },
-    { header: "Planned Date", dataKey: "planned", toggleable: true },
-    { header: "Action", dataKey: "actionColumn", toggleable: false, alwaysVisible: true },
-  ]), []);
-
-  const allPoColumnsMeta = useMemo(() => ([
-    { header: "Indent ID", dataKey: "indentId", toggleable: true, alwaysVisible: true },
-    { header: "Firm Name", dataKey: "firmName", toggleable: true },
-    { header: "Vendor Name", dataKey: "vendorName", toggleable: true },
-    { header: "Raw Material", dataKey: "rawMaterialName", toggleable: true },
-    { header: "Quantity", dataKey: "quantity", toggleable: true },
-    { header: "Total Amount", dataKey: "totalAmount", toggleable: true },
-    { header: "Alumina %", dataKey: "alumina", toggleable: true },
-    { header: "Iron %", dataKey: "iron", toggleable: true },
-    { header: "PO File", dataKey: "poFile", toggleable: true, isLink: true, linkText: "View PDF" },
-    { header: "Created At", dataKey: "createdAt", toggleable: true },
-  ]), []);
-
-  const ADVANCE_PAYMENT_COLUMNS_META = useMemo(() => ([
-    { header: "Indent ID", dataKey: "indentId", toggleable: true, alwaysVisible: true },
-    { header: "Firm Name", dataKey: "firmName", toggleable: true },
-    { header: "Vendor Name", dataKey: "vendorName", toggleable: true },
-    { header: "Status", dataKey: "paymentStatus", toggleable: true },
-    { header: "Amount to Pay", dataKey: "toBePaidAmount", toggleable: true }, // Data from COL_TO_BE_PAID_AMOUNT
-    { header: "Payment Date", dataKey: "whenToBePaid", toggleable: true }, // Data from COL_WHEN_TO_BE_PAID
-  ]), []);
-
-  // Helper function to parse gviz date string
-  const parseGvizDate = useCallback((dateValue) => {
-    if (!dateValue || typeof dateValue !== "string" || !dateValue.trim()) {
-      return "";
-    }
-    const gvizMatch = dateValue.match(/^Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+))?\)/);
-    if (gvizMatch) {
-      const [, year, month, day, hours, minutes, seconds] = gvizMatch.map(Number);
-      const parsedDate = new Date(year, month, day, hours || 0, minutes || 0, seconds || 0);
-      if (!isNaN(parsedDate.getTime())) {
-        return new Intl.DateTimeFormat("en-GB", {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        }).format(parsedDate).replace(/,/g, "");
-      }
-    }
-    const dateObj = new Date(dateValue);
-    if (!isNaN(dateObj.getTime())) {
-      return new Intl.DateTimeFormat("en-GB", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }).format(dateObj).replace(/,/g, "");
-    }
-    return dateValue;
-  }, []);
-
-  // Initialize visibility states
+  // Fetch Firms and Master data
   useEffect(() => {
-    const initializeVisibility = (columnsMeta) => {
-      const visibility = {};
-      columnsMeta.forEach((col) => {
-        visibility[col.dataKey] = col.alwaysVisible || col.toggleable;
-      });
-      return visibility;
-    };
-    setVisibleIndentColumns(initializeVisibility(allIndentColumnsMeta));
-    setVisiblePoColumns(initializeVisibility(allPoColumnsMeta));
-    setVisiblePaymentColumns(initializeVisibility(ADVANCE_PAYMENT_COLUMNS_META));
-  }, [allIndentColumnsMeta, allPoColumnsMeta, ADVANCE_PAYMENT_COLUMNS_META]);
-
-  const fetchAllData = useCallback(async () => {
-    setLoading(true);
-    setPaymentLoading(true);
-    setError(null);
-    setPaymentError(null);
-    try {
-      const { data: rows, error: fetchError } = await supabase
-        .from(INDENT_PO_TABLE)
-        .select('*')
-        .order('id', { ascending: false });
-
-      if (fetchError) throw fetchError;
-
-      let processedData = rows.map((row) => {
-        const rowData = {
-          _dbId: row.id,
-          id: row["Indent Id."] || "",
-          firmName: row["Firm Name"] || "",
-          vendorName: row["Vendor"] || "",
-          rawMaterialName: row["Material"] || "",
-          typeOfIndent: row["Priority"] || "",
-          approvedQty: row["Approved Qty"] || "",
-          planned: row["Planned2"] || "",
-          poTimestamp: row["Actual2"] || "",
-          indentId: row["Indent Id."] || "",
-          quantity: row["Total Quantity"] || "",
-          totalAmount: row["Total Amount"] || "",
-          alumina: row["Alumina %"] || "",
-          iron: row["Iron %"] || "",
-          poFile: row["PO Copy"] || "",
-          createdAt: row["Actual2"] || "",
-          haveToPO: row["Have To Make PO"] || "",
-          rate: row["Rate"] || "",
-          leadTimeToLift: row["Lead Time To Lift (days)"] || "",
-          notes: row["PO Notes"] || "",
-          advanceToBePaid: row["Advance To Be Paid"] || "",
-          toBePaidAmount: row["To Be Paid Amount"] || "",
-          whenToBePaid: row["When To Be Paid Amount"] || "",
-        };
-
-        const advanceToBePaidFlag = (rowData.advanceToBePaid || "").toLowerCase();
-        const isPaid = (advanceToBePaidFlag === 'yes' && rowData.toBePaidAmount !== "" && rowData.whenToBePaid !== "");
-        rowData.paymentStatus = isPaid ? "Paid" : "Pending";
-
-        return rowData;
-      });
-
-      if (user?.firmName && user.firmName.toLowerCase() !== 'all') {
-        const userFirmNameLower = user.firmName.toLowerCase();
-        processedData = processedData.filter(item => (item.firmName || "").toLowerCase().trim() === userFirmNameLower);
+    async function fetchData() {
+      const { data: firmsData, error: firmsError } = await supabase.from("Firms").select("*");
+      if (firmsError) {
+        console.error("Error fetching firms:", firmsError);
+      } else {
+        setFirms(firmsData || []);
+        
+        // Auto-select firm based on user
+        const userFirmPath = user?.firmName;
+        if (userFirmPath && userFirmPath !== "all") {
+          const firstUserFirm = Array.isArray(userFirmPath) ? userFirmPath[0] : userFirmPath;
+          const found = firmsData.find(f => 
+            normalize(f.firm_name) === normalize(firstUserFirm) || 
+            normalize(f.data_name) === normalize(firstUserFirm)
+          );
+          if (found) setSelectedFirm(found);
+        }
       }
 
-      const indentsForApproval = processedData.filter(item => item.planned && !item.poTimestamp);
-      const poHistory = processedData.filter(item => item.poTimestamp).sort((a, b) => new Date(b.poTimestamp) - new Date(a.poTimestamp));
-      const advancePaymentNeeded = processedData.filter(item => (item.advanceToBePaid || "").toLowerCase() === 'yes');
-      
-      setIndents(indentsForApproval);
-      setPurchaseOrders(poHistory);
-      setIndentData(advancePaymentNeeded);
-
-    } catch (err) {
-      console.error("Error fetching data:", err);
-      setError("Failed to load data: " + err.message);
-      setPaymentError("Failed to load payment data: " + err.message);
-      toast.error("Data Load Error", { description: err.message });
-    } finally {
-      setLoading(false);
-      setPaymentLoading(false);
+      const { data: mData, error: mError } = await supabase.from("Master").select("*");
+      if (mError) {
+        console.error("Error fetching master data:", mError);
+      } else {
+        setMasterData(mData || []);
+      }
     }
+    fetchData();
   }, [user]);
 
   useEffect(() => {
-    fetchAllData();
-  }, [fetchAllData]);
-
-  const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((prev) => {
-      const newFormData = { ...prev, [name]: value };
-      if (name === "rate" || name === "totalQty") {
-        const rate = parseFloat(newFormData.rate) || 0;
-        const totalQty = parseFloat(newFormData.totalQty) || 0;
-        newFormData.totalAmount = (rate * totalQty).toFixed(2);
-      }
-      return newFormData;
-    });
-    setPoErrors(prev => ({ ...prev, [name]: null }));
-  };
-
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setFormData({
-        ...formData,
-        poFile: file,
-      });
-      toast.info("File Selected", { description: file.name });
-    }
-  };
-
-  const uploadFileToDrive = async (file) => {
-    toast.loading("Uploading file...", { id: "upload-toast" });
-    try {
-        const base64Data = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.readAsDataURL(file);
-            reader.onload = () => resolve(reader.result.split(',')[1]);
-            reader.onerror = (error) => reject(error);
-        });
-
-        const payload = new URLSearchParams();
-        payload.append("action", "uploadFile");
-        payload.append("fileName", file.name);
-        payload.append("mimeType", file.type);
-        payload.append("base64Data", base64Data);
-        payload.append("folderId", "1k0dGpTHzg7YHiAjIpVpz6smcy28g1OIM");
-
-        const response = await fetch(SCRIPT_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: payload.toString(),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to upload file: ${response.status} - ${errorText}`);
-        }
-        const result = await response.json();
-        if (!result.success) {
-            throw new Error(result.message || "Failed to upload file via Apps Script");
-        }
-        toast.success("File Uploaded!", { id: "upload-toast", description: file.name + " uploaded successfully." });
-        return result.fileUrl;
-    } catch (error) {
-        console.error("Error uploading file to Google Drive:", error);
-        toast.error("Upload Failed", { id: "upload-toast", description: error.message });
-        throw error;
-    }
-  };
-
-  const updateGoogleSheet = async (dataToUpdate, currentHaveToPO) => {
-    toast.loading("Updating Supabase Database...", { id: "sheet-update-toast" });
-    try {
-        if (!selectedIndent || !selectedIndent._dbId) {
-            throw new Error("Selected indent details are missing for update.");
-        }
-
-        const timestamp = new Date().toISOString();
-        const updates = {
-            "Actual2": timestamp,
-            "Have To Make PO": currentHaveToPO
-        };
-
-        if (currentHaveToPO === "yes") {
-            updates["Rate"] = parseFloat(dataToUpdate.rate);
-            updates["Lead Time To Lift (days)"] = parseInt(dataToUpdate.leadTimeToLift);
-            updates["Total Quantity"] = parseFloat(dataToUpdate.totalQty);
-            updates["Total Amount"] = parseFloat(dataToUpdate.totalAmount);
-            if (dataToUpdate.poFileUrl) {
-                updates["PO Copy"] = dataToUpdate.poFileUrl;
-            }
-            updates["Advance To Be Paid"] = dataToUpdate.advanceToBePaid;
-            if (dataToUpdate.advanceToBePaid === "yes") {
-                updates["To Be Paid Amount"] = parseFloat(dataToUpdate.toBePaidAmount);
-                updates["When To Be Paid Amount"] = dataToUpdate.whenToBePaid;
-            } else {
-                updates["To Be Paid Amount"] = null;
-                updates["When To Be Paid Amount"] = null;
-            }
-            updates["PO Notes"] = dataToUpdate.notes;
-            updates["Alumina %"] = parseFloat(dataToUpdate.alumina);
-            updates["Iron %"] = parseFloat(dataToUpdate.iron);
-        } else {
-            // clear PO related fields if no PO
-            const fieldsToClear = [
-                "Rate", "Lead Time To Lift (days)", "Total Quantity", "Total Amount",
-                "PO Copy", "Advance To Be Paid", "To Be Paid Amount",
-                "When To Be Paid Amount", "PO Notes", "Alumina %", "Iron %"
-            ];
-            fieldsToClear.forEach(col => {
-                updates[col] = null;
-            });
-        }
-
-        const { error: updateError } = await supabase
-            .from(INDENT_PO_TABLE)
-            .update(updates)
-            .eq('id', selectedIndent._dbId);
-
-        if (updateError) throw updateError;
+    async function load() {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("INDENT-PO")
+          .select("*")
+          .not("Planned2", "is", null);
+        if (error) throw error;
+        const mapped = (data || []).map(mapRow);
         
-        toast.success("Database Updated!", { id: "sheet-update-toast", description: `Indent ID ${selectedIndent.id} processed.` });
-
-    } catch (error) {
-        console.error("Error updating Supabase:", error);
-        toast.error("Database Update Failed", { id: "sheet-update-toast", description: error.message });
-        throw error;
-    }
-  };
-
-  const handleHaveToPOChange = (value) => {
-    setHaveToPO(value);
-    if (value !== "yes") {
-      setFormData((prev) => ({
-        ...prev,
-        rate: "",
-        leadTimeToLift: "",
-        totalQty: selectedIndent?.approvedQty || "",
-        totalAmount: "",
-        advanceToBePaid: "",
-        toBePaidAmount: "",
-        whenToBePaid: "",
-        notes: "",
-        poFile: null,
-        alumina: "",
-        iron: "",
-      }));
-    } else {
-      setFormData((prev) => ({
-        ...prev,
-        totalQty: selectedIndent?.approvedQty || "",
-      }));
-    }
-    setPoErrors({});
-  };
-
-  const handleIndentSelect = (indent) => {
-    setSelectedIndent(indent);
-    setFormData({
-      indentId: indent.id,
-      quantity: indent.approvedQty,
-      rate: "",
-      leadTimeToLift: "",
-      totalQty: indent.approvedQty,
-      totalAmount: "",
-      advanceToBePaid: "",
-      toBePaidAmount: "",
-      whenToBePaid: "",
-      notes: "",
-      poFile: null,
-      alumina: "",
-      iron: "",
-    });
-    setPoErrors({});
-    setHaveToPO("");
-    setIsModalOpen(true);
-  };
-
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setPoErrors({});
-    setHaveToPO("");
-    setSelectedIndent(null);
-    setFormData({
-      indentId: "",
-      quantity: "",
-      rate: "",
-      leadTimeToLift: "",
-      totalQty: "",
-      totalAmount: "",
-      advanceToBePaid: "",
-      toBePaidAmount: "",
-      whenToBePaid: "",
-      notes: "",
-      poFile: null,
-      alumina: "",
-      iron: "",
-    });
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-
-    if (!haveToPO) {
-      toast.error("Selection Required", { description: "Please select if you need to generate a PO (Yes/No)." });
-      setPoErrors(prev => ({ ...prev, haveToPO: "This selection is mandatory." })); // Add error for the select
-      return;
-    }
-
-    if (haveToPO === "yes" && !validatePoForm()) {
-      toast.error("Validation Error", { description: "Please fill all required PO fields." });
-      return;
-    }
-    if (!selectedIndent) {
-      toast.error("Selection Error", { description: "No indent selected." });
-      return;
-    }
-
-    setIsSubmitting(true);
-    toast.loading("Initiating PO process...", { id: "po-submit" });
-
-    try {
-      let fileUrl = "";
-      if (haveToPO === "yes" && formData.poFile) {
-        fileUrl = await uploadFileToDrive(formData.poFile);
-      }
-
-      const dataToSubmit = {
-        ...formData,
-        poFileUrl: fileUrl,
-      };
-
-      await updateGoogleSheet(dataToSubmit, haveToPO);
-
-      toast.success("PO Processed", {
-        id: "po-submit",
-        description: `Purchase Order processing for ${selectedIndent.id} has been initiated successfully.`
-      });
-      setRefreshTrigger(prev => prev + 1);
-      closeModal();
-    } catch (error) {
-      console.error("Error submitting form:", error);
-      toast.error("Submission Failed", { id: "po-submit", description: error.message || "An unexpected error occurred." });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const validatePoForm = () => {
-    const newErrors = {};
-    if (haveToPO === "yes") {
-      if (!formData.rate || parseFloat(formData.rate) <= 0) newErrors.rate = "Rate must be a positive number.";
-      if (!formData.leadTimeToLift || parseInt(formData.leadTimeToLift) <= 0) newErrors.leadTimeToLift = "Lead Time must be a positive number.";
-      if (!formData.totalQty || parseFloat(formData.totalQty) <= 0) newErrors.totalQty = "Total Quantity must be a positive number.";
-      if (!formData.alumina || parseFloat(formData.alumina) < 0) newErrors.alumina = "Alumina % is required and must be non-negative.";
-      if (!formData.iron || parseFloat(formData.iron) < 0) newErrors.iron = "Iron % is required and must be non-negative.";
-      if (!formData.advanceToBePaid) newErrors.advanceToBePaid = "Advance option is required.";
-      if (formData.advanceToBePaid === "yes") {
-        if (!formData.toBePaidAmount || parseFloat(formData.toBePaidAmount) <= 0) newErrors.toBePaidAmount = "Advance amount must be a positive number.";
-        if (!formData.whenToBePaid) newErrors.whenToBePaid = "Payment date is required.";
-      }
-    }
-    setPoErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleFilterChange = (key, value) => {
-    setFilters(prev => ({ ...prev, [key]: value }));
-  };
-
-  const clearAllFilters = () => {
-    setFilters({
-      vendorName: "all",
-      rawMaterialName: "all",
-      firmName: "all"
-    });
-  };
-
-  const handleToggleColumn = (tab, dataKey, checked) => {
-    if (tab === "indent") {
-      setVisibleIndentColumns((prev) => ({ ...prev, [dataKey]: checked }));
-    } else if (tab === "po") {
-      setVisiblePoColumns((prev) => ({ ...prev, [dataKey]: checked }));
-    } else {
-      setVisiblePaymentColumns((prev) => ({ ...prev, [dataKey]: checked }));
-    }
-  };
-
-  const handleSelectAllColumns = (tab, columnsMeta, checked) => {
-    const newVisibility = {};
-    columnsMeta.forEach((col) => {
-      if (col.toggleable && !col.alwaysVisible) {
-        newVisibility[col.dataKey] = checked;
-      }
-    });
-    if (tab === "indent") {
-      setVisibleIndentColumns((prev) => ({ ...prev, ...newVisibility }));
-    } else if (tab === "po") {
-      setVisiblePoColumns((prev) => ({ ...prev, ...newVisibility }));
-    } else {
-      setVisiblePaymentColumns((prev) => ({ ...prev, ...newVisibility }));
-    }
-  };
-
-  const handlePaymentSelect = (item) => {
-    setSelectedPaymentIndent(item);
-    // When selecting for payment, pre-fill with existing (or empty) values from the item
-    setPaymentFormData({
-      amount: item.toBePaidAmount || "",
-      paymentDate: item.whenToBePaid || "",
-    });
-    setPaymentFormErrors({});
-    setShowPaymentPopup(true);
-  };
-
-  const handleClosePaymentPopup = () => {
-    setShowPaymentPopup(false);
-    setSelectedPaymentIndent(null);
-    setPaymentFormData({ amount: "", paymentDate: "" });
-    setPaymentFormErrors({});
-  };
-
-  const handlePaymentInputChange = (e) => {
-    const { name, value } = e.target;
-    setPaymentFormData(prev => ({ ...prev, [name]: value }));
-    if (paymentFormErrors[name]) setPaymentFormErrors(prev => ({ ...prev, [name]: null }));
-  };
-
-  const validatePaymentForm = () => {
-    const newErrors = {};
-    if (!paymentFormData.amount || isNaN(paymentFormData.amount) || parseFloat(paymentFormData.amount) <= 0)
-      newErrors.amount = "A valid positive amount is required.";
-    if (!paymentFormData.paymentDate)
-      newErrors.paymentDate = "Payment date is required.";
-    setPaymentFormErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handlePaymentSubmit = async (e) => {
-    e.preventDefault();
-    if (!validatePaymentForm() || !selectedPaymentIndent) {
-      toast.error("Validation Error", { description: "Please fill all required payment fields." });
-      return;
-    }
-    setIsSubmittingPayment(true);
-    toast.loading("Recording payment...", { id: "payment-submit" });
-    try {
-      const updates = {
-        "To Be Paid Amount": parseFloat(paymentFormData.amount),
-        "When To Be Paid Amount": paymentFormData.paymentDate,
-      };
-
-      const { error: updateError } = await supabase
-        .from(INDENT_PO_TABLE)
-        .update(updates)
-        .eq('id', selectedPaymentIndent._dbId);
-
-      if (updateError) throw updateError;
-
-      toast.success("Payment Recorded!", {
-        id: "payment-submit",
-        description: `Advance payment for Indent ID ${selectedPaymentIndent.indentId} recorded.`
-      });
-      setRefreshTrigger(p => p + 1);
-      handleClosePaymentPopup();
-    } catch (error) {
-      console.error("Error submitting payment:", error);
-      toast.error("Submission Failed", { id: "payment-submit", description: error.message });
-    } finally {
-      setIsSubmittingPayment(false);
-    }
-  };
-
-  const filteredIndents = useMemo(() => {
-    return indents.filter(item => {
-      const matchesVendor = filters.vendorName === 'all' || item.vendorName === filters.vendorName;
-      const matchesMaterial = filters.rawMaterialName === 'all' || item.rawMaterialName === filters.rawMaterialName;
-      const matchesFirm = filters.firmName === 'all' || item.firmName === filters.firmName;
-      return matchesVendor && matchesMaterial && matchesFirm;
-    });
-  }, [indents, filters]);
-
-  const filteredPOs = useMemo(() => {
-    return purchaseOrders.filter(item => {
-      const matchesVendor = filters.vendorName === 'all' || item.vendorName === filters.vendorName;
-      const matchesMaterial = filters.rawMaterialName === 'all' || item.rawMaterialName === filters.rawMaterialName;
-      const matchesFirm = filters.firmName === 'all' || item.firmName === filters.firmName;
-      return matchesVendor && matchesMaterial && matchesFirm;
-    });
-  }, [purchaseOrders, filters]);
-
-  const filteredPaymentIndents = useMemo(() => {
-    return indentData.filter(item => {
-      const matchesVendor = filters.vendorName === 'all' || item.vendorName === filters.vendorName;
-      const matchesFirm = filters.firmName === 'all' || item.firmName === filters.firmName;
-      return matchesVendor && matchesFirm;
-    });
-  }, [indentData, filters]);
-
-  const getTableColumns = useCallback((tab) => {
-    if (tab === "approve") return allIndentColumnsMeta.filter(col => visibleIndentColumns[col.dataKey]);
-    if (tab === "history") return allPoColumnsMeta.filter(col => visiblePoColumns[col.dataKey]);
-    if (tab === "advancePayment") return ADVANCE_PAYMENT_COLUMNS_META.filter(col => visiblePaymentColumns[col.dataKey] && col.dataKey !== 'actionColumn');
-    return [];
-  }, [allIndentColumnsMeta, visibleIndentColumns, allPoColumnsMeta, visiblePoColumns, ADVANCE_PAYMENT_COLUMNS_META, visiblePaymentColumns]);
-
-
-  const renderTableSection = useCallback((tabKey, title, description, data, columnsMeta, visibilityState, isLoading, hasError, errorMessage) => {
-    const visibleCols = columnsMeta.filter((col) =>
-      visibilityState[col.dataKey] && !(tabKey === "advancePayment" && col.dataKey === 'actionColumn')
-    );
-
-    const renderCellContent = (item, column) => {
-      let value = item[column.dataKey];
-      const displayValue = (value === null || value === undefined || value === "") ? <span className="text-gray-400 text-xs">N/A</span> : value;
-
-      if (tabKey === "advancePayment" && column.dataKey === "paymentStatus") {
-        const isPaymentComplete = item.paymentStatus === "Paid";
-        return (
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className={`px-2 py-0.5 text-xs ${isPaymentComplete ? "bg-green-100 text-green-700 border-green-200" : "bg-yellow-100 text-yellow-700 border-yellow-200"}`}>
-              {isPaymentComplete ? "Paid" : "Pending"}
-            </Badge>
-            {!isPaymentComplete && (
-              <Button
-                onClick={() => handlePaymentSelect(item)}
-                size="sm"
-                variant="outline"
-                className="h-7 px-2.5 py-1 text-xs bg-blue-100 text-blue-700 hover:bg-blue-200"
-              >
-                Record Payment
-              </Button>
-            )}
-          </div>
-        );
-      }
-      
-      if (column.dataKey === "actionColumn") {
-        if (tabKey === "approve") {
-          return <Button onClick={() => handleIndentSelect(item)} size="sm" className="h-7 px-2.5 py-1 text-xs bg-purple-600 hover:bg-purple-700 text-white font-semibold">Generate PO</Button>;
+        // Debug info: Log available firm names in data
+        const availableFirmsInData = Array.from(new Set(mapped.map(i => i.firmName))).filter(Boolean);
+        console.log("Available firms in INDENT-PO data:", availableFirmsInData);
+        if (selectedFirm) {
+          console.log("Currently selected firm:", selectedFirm.firm_name);
         }
-        return null;
-      }
 
-      if (column.dataKey === "totalAmount" || column.dataKey === "toBePaidAmount") {
-        return displayValue !== "N/A" ? `₹${Number(value).toLocaleString()}` : displayValue;
-      }
-      if (column.isLink) {
-        return value ? (
-          <a href={value} target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline inline-flex items-center text-xs">
-            <LinkIcon className="h-3 w-3 mr-1" /> {column.linkText || "View"}
-          </a>
-        ) : (
-          <span className="text-gray-400 text-xs">N/A</span>
-        );
-      }
-      if (column.dataKey === 'id' || column.dataKey === 'indentId') {
-        return <span className="font-semibold text-purple-600">{displayValue}</span>;
-      }
-      return displayValue;
-    };
+        // Filter rows by the current selected firm
+        let filtered = mapped;
+        if (selectedFirm) {
+          // Use data_name (short key like 'Pmmpl') if it exists, otherwise fall back to firm_name
+          const filterKey = selectedFirm.data_name || selectedFirm.firm_name;
+          filtered = mapped.filter(item => canViewFirm(filterKey, item.firmName));
+        } else if (user?.firmName) {
+          filtered = mapped.filter(item => canViewFirm(user.firmName, item.firmName));
+        }
 
-    return (
-      <Card className="shadow-sm border border-border flex-1 flex flex-col">
-        <CardHeader className="py-3 px-4 bg-muted/30">
-          <div className="flex justify-between items-center">
-            <div>
-              <CardTitle className="flex items-center text-md font-semibold text-foreground">
-                {tabKey === "approve" && <File className="h-5 w-5 text-purple-600 mr-2" />}
-                {tabKey === "history" && <History className="h-5 w-5 text-purple-600 mr-2" />}
-                {tabKey === "advancePayment" && <Wallet className="h-5 w-5 text-purple-600 mr-2" />}
-                {title} ({data.length})
-              </CardTitle>
-              <CardDescription className="text-sm text-muted-foreground mt-0.5">{description}</CardDescription>
-            </div>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 text-xs bg-white">
-                  <MixerHorizontalIcon className="mr-1.5 h-3.5 w-3.5" /> View Columns
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[240px] p-3">
-                <div className="grid gap-2">
-                  <p className="text-sm font-medium">Toggle Columns</p>
-                  <div className="flex items-center justify-between mt-1 mb-2">
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="p-0 h-auto text-xs"
-                      onClick={() => handleSelectAllColumns(tabKey === "approve" ? "indent" : tabKey === "history" ? "po" : "payment", columnsMeta, true)}
-                    >
-                      Select All
-                    </Button>
-                    <span className="text-gray-300 mx-1">|</span>
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="p-0 h-auto text-xs"
-                      onClick={() => handleSelectAllColumns(tabKey === "approve" ? "indent" : tabKey === "history" ? "po" : "payment", columnsMeta, false)}
-                    >
-                      Deselect All
-                    </Button>
-                  </div>
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                    {columnsMeta
-                      .filter((col) => col.toggleable)
-                      .map((col) => (
-                        <div key={`toggle-${tabKey}-${col.dataKey}`} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`toggle-${tabKey}-${col.dataKey}`}
-                            checked={!!visibilityState[col.dataKey]}
-                            onCheckedChange={(checked) => handleToggleColumn(tabKey === "approve" ? "indent" : tabKey === "history" ? "po" : "payment", col.dataKey, Boolean(checked))}
-                            disabled={col.alwaysVisible || (tabKey === "advancePayment" && col.dataKey === 'actionColumn')} // Disable if it's the action column on advance payment
-                          />
-                          <Label
-                            htmlFor={`toggle-${tabKey}-${col.dataKey}`}
-                            className="text-xs font-normal cursor-pointer"
-                          >
-                            {col.header}{" "}
-                            {col.alwaysVisible && <span className="text-gray-400 ml-0.5 text-xs">(Fixed)</span>}
-                            {tabKey === "advancePayment" && col.dataKey === 'actionColumn' && <span className="text-gray-400 ml-0.5 text-xs">(Removed)</span>}
-                          </Label>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0 flex-1 flex flex-col">
-          {isLoading ? (
-            <div className="flex flex-col justify-center items-center py-10 flex-1">
-              <Loader2 className="h-8 w-8 text-purple-600 animate-spin mb-3" />
-              <p className="text-muted-foreground ml-2">Loading...</p>
-            </div>
-          ) : hasError ? (
-            <div className="flex flex-col items-center justify-center py-10 px-4 border-2 border-dashed border-destructive-foreground bg-destructive/10 rounded-lg mx-4 my-4 text-center flex-1">
-              <AlertTriangle className="h-10 w-10 text-destructive mb-3" />
-              <p className="font-medium text-destructive">Error Loading Data</p>
-              <p className="text-sm text-muted-foreground max-w-md">{errorMessage}</p>
-            </div>
-          ) : data.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 px-4 border-2 border-dashed border-purple-200/50 bg-purple-50/50 rounded-lg mx-4 my-4 text-center flex-1">
-              <Info className="h-12 w-12 text-purple-500 mb-3" />
-              <p className="font-medium text-foreground">No Data Found</p>
-              <p className="text-sm text-muted-foreground text-center">
-                {tabKey === "approve" && "No approved indents found for PO generation."}
-                {tabKey === "history" && "No purchase orders have been generated yet."}
-                {tabKey === "advancePayment" && "No items require advance payment."}
-                {user?.firmName && user.firmName.toLowerCase() !== "all" && (
-                  <span className="block mt-1">(Filtered by firm: {user.firmName})</span>
-                )}
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-b-lg flex-1">
-              <Table>
-                <TableHeader className="bg-muted/50 sticky top-0 z-10">
-                  <TableRow>
-                    {visibleCols.map((col) => (
-                      <TableHead key={col.dataKey} className="whitespace-nowrap text-xs px-3 py-2">
-                        {col.header}
-                      </TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.map((item, index) => (
-                    <TableRow key={item.id || item._dbId || `row-${index}`} className="hover:bg-purple-50/50">
-                      {visibleCols.map((column) => (
-                        <TableCell
-                          key={column.dataKey}
-                          className={`whitespace-nowrap text-xs px-3 py-2 ${column.dataKey === "id" || column.dataKey === "indentId" ? "font-medium text-primary" : "text-gray-700"}`}
-                        >
-                          {renderCellContent(item, column)}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        setRows(filtered);
+        
+        if (selectedFirm) {
+          setFormData((prev) => ({
+            ...prev,
+            poNumber: generatePoNumber(filtered, selectedFirm),
+          }));
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error("Failed to load purchase order data");
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, [user?.firmName, refreshTrigger, selectedFirm]);
+
+  // Realtime: Listen for changes in INDENT-PO and refresh
+  useRealtime("INDENT-PO", () => {
+    setRefreshTrigger((prev) => prev + 1);
+  });
+
+
+  const pendingGroups = useMemo(
+    () =>
+      groupByVendor(rows.filter((item) => item.planned && !item.poTimestamp)),
+    [rows],
+  );
+  const createdGroups = useMemo(
+    () =>
+      groupByVendor(rows.filter((item) => item.planned && item.poTimestamp)),
+    [rows],
+  );
+  const vendorGroups = mode === "create" ? pendingGroups : createdGroups;
+  const [poSearch, setPoSearch] = useState("");
+
+  const poNumbers = useMemo(() => {
+    return Array.from(new Set(rows.filter((r) => r.poTimestamp && r.poNumber).map((r) => r.poNumber))).sort();
+  }, [rows]);
+
+
+  const currentGroup = useMemo(() => {
+    if (mode === "create") {
+      return (
+        vendorGroups.find(
+          (group) => normalize(group.vendorName) === normalize(formData.supplierName),
+        ) || null
+      );
+    } else {
+      if (!formData.poNumber) return null;
+      const poRows = rows.filter((r) => r.poNumber === formData.poNumber);
+      if (poRows.length === 0) return null;
+      return {
+        vendorName: poRows[0].vendorName,
+        indents: poRows,
+      };
+    }
+  }, [mode, vendorGroups, rows, formData.supplierName, formData.poNumber]);
+
+
+  useEffect(() => {
+    if (!currentGroup) return;
+    const first = currentGroup.indents[0] || {};
+    
+    // Find vendor in master data for better details
+    const vendorMaster = masterData.find(m => 
+      normalize(m["Vendor Name"]) === normalize(currentGroup.vendorName) ||
+      normalize(m["Vendor Name KYC"]) === normalize(currentGroup.vendorName)
     );
-  }, [handleIndentSelect, handlePaymentSelect, handleToggleColumn, handleSelectAllColumns]);
+
+    setFormData((prev) => ({
+      ...prev,
+      poNumber: prev.poNumber || generatePoNumber(rows, selectedFirm),
+      poDate: mode === "revise" ? first.poDate || prev.poDate : prev.poDate,
+      deliveryDate: mode === "revise" ? first.deliveryDate || prev.deliveryDate : prev.deliveryDate,
+      supplierName: currentGroup.vendorName,
+      supplierAddress: vendorMaster?.["Area Lifting"] || first.supplierAddress || prev.supplierAddress, // Area Lifting is sometimes used for address in this project
+      gstin: vendorMaster?.["GST Number"] || first.supplierGstin || prev.gstin,
+      companyEmail: vendorMaster?.["Email"] || first.supplierEmail || prev.companyEmail,
+      quotationNumber: first.quotationNumber || prev.quotationNumber,
+      quotationDate: first.quotationDate || prev.quotationDate,
+      notes: prev.notes || first.notes || "",
+      destination: first.dest || first.firmName || prev.destination,
+      advanceToBePaid:
+        normalize(first.advanceToBePaid) === "yes"
+          ? "yes"
+          : prev.advanceToBePaid,
+      toBePaidAmount: first.toBePaidAmount || prev.toBePaidAmount,
+      whenToBePaid: first.whenToBePaid || prev.whenToBePaid,
+      transportType: first.transportType || prev.transportType,
+      paymentTerms: vendorMaster?.["Payment Term"] || first.paymentTerms || prev.paymentTerms,
+
+      indents: currentGroup.indents.map((indent) => ({
+        id: indent.id,
+        indentNumber: String(indent.id || ""),
+        productName: indent.rawMaterialName || "",
+        specifications: [
+          indent.alumina ? `Alumina ${indent.alumina}%` : "",
+          indent.iron ? `Iron ${indent.iron}%` : "",
+          indent.sio2 ? `SiO2 ${indent.sio2}%` : "",
+          indent.cao ? `CaO ${indent.cao}%` : "",
+          indent.ap ? `AP ${indent.ap}%` : "",
+          indent.bd ? `BD ${indent.bd}%` : "",
+          indent.fineness ? `Fineness ${indent.fineness}` : "",
+          indent.packaging ? `Packaging ${indent.packaging}` : "",
+        ]
+          .filter(Boolean)
+          .join(", "),
+        quantity: indent.approvedQty,
+        unit: "MT",
+        rate: indent.approvedRate || "",
+        gstPercent: 18,
+        discountPercent: "",
+        specs: {
+          alumina: indent.alumina || "",
+          iron: indent.iron || "",
+          sio2: indent.sio2 || "",
+          cao: indent.cao || "",
+          ap: indent.ap || "",
+          bd: indent.bd || "",
+          fineness: indent.fineness || "",
+        },
+        packaging: indent.packaging || "",
+      })),
+    }));
+  }, [currentGroup, rows]);
+
+  const subtotal = useMemo(
+    () => sumBy(formData.indents, taxable),
+    [formData.indents],
+  );
+  const gstAmount = useMemo(
+    () => sumBy(formData.indents, lineGst),
+    [formData.indents],
+  );
+  const grandTotal = useMemo(
+    () => sumBy(formData.indents, lineTotal),
+    [formData.indents],
+  );
+  const advanceAmount = Number(formData.toBePaidAmount) || 0;
+  const totalQuantity = useMemo(
+    () => sumBy(formData.indents, (item) => Number(item.quantity) || 0),
+    [formData.indents],
+  );
+
+  const setField = (name, value) =>
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  const updateTerm = (index, value) =>
+    setFormData((prev) => ({
+      ...prev,
+      terms: prev.terms.map((term, i) => (i === index ? value : term)),
+    }));
+  const updateIndent = (index, key, value) =>
+    setFormData((prev) => ({
+      ...prev,
+      indents: prev.indents.map((item, i) =>
+        i === index ? { ...item, [key]: value } : item,
+      ),
+    }));
+  const removeIndent = (index) =>
+    setFormData((prev) => ({
+      ...prev,
+      indents: prev.indents.filter((_, i) => i !== index),
+    }));
+  const removeTerm = (index) =>
+    setFormData((prev) => ({
+      ...prev,
+      terms: prev.terms.filter((_, i) => i !== index),
+    }));
+  const resetForm = () => {
+    setErrors({});
+    setTermEditIndex(-1);
+    setEditDestination(false);
+    setFormData({ ...defaultForm(), poNumber: generatePoNumber(rows, selectedFirm) });
+  };
+
+  const validateForm = () => {
+    const next = {};
+    if (!formData.supplierName) next.supplierName = "Supplier is required";
+    if (!formData.poNumber) next.poNumber = "PO number is required";
+    if (!formData.poDate) next.poDate = "PO date is required";
+    if (!formData.deliveryDate) next.deliveryDate = "Delivery date is required";
+    if (!formData.supplierAddress)
+      next.supplierAddress = "Supplier address is required";
+    if (!formData.gstin) next.gstin = "GSTIN is required";
+    if (!formData.quotationNumber)
+      next.quotationNumber = "Quotation number is required";
+    if (!formData.notes) next.notes = "PO notes are required";
+    if (!formData.indents.length)
+      next.indents = "At least one item is required";
+    if (!formData.transportType)
+      next.transportType = "Transport type is required";
+    if (formData.advanceToBePaid === "yes" && !formData.toBePaidAmount)
+      next.toBePaidAmount = "Advance amount is required";
+    if (formData.advanceToBePaid === "yes" && !formData.whenToBePaid)
+      next.whenToBePaid = "Advance payment date is required";
+    setErrors(next);
+    return !Object.keys(next).length;
+  };
+
+  const buildPdfProps = () => ({
+    companyName: selectedFirm?.firm_name || "Parekh Gallerium",
+    companyPhone: selectedFirm?.phone || "771-4001598",
+    companyGstin: selectedFirm?.gstin || "22AAHCP9274B1ZI",
+    companyPan: selectedFirm?.pan || "AAHCP9274B",
+    companyAddress: selectedFirm?.address || "Kh No 297/2, Akoli, Block Dharsiwa, Raipur",
+    billingAddress: selectedFirm?.billing_address || "Kh No 297/2, Akoli, Block Dharsiwa, Raipur",
+    destinationAddress: formData.destination,
+    supplierName: formData.supplierName,
+    supplierAddress: formData.supplierAddress,
+    supplierGstin: formData.gstin,
+    orderNumber: formData.poNumber,
+    orderDate: formatDate(formData.poDate),
+    deliveryDate: formatDate(formData.deliveryDate),
+    quotationNumber: formData.quotationNumber,
+    quotationDate: formatDate(formData.quotationDate),
+    notes: formData.notes,
+    items: formData.indents.map((item) => ({
+      product: item.productName,
+      quantity: Number(item.quantity) || 0,
+      unit: item.unit || "MT",
+      rate: Number(item.rate) || 0,
+      amount: lineBase(item),
+      specs: item.specs || {},
+      packaging: item.packaging || "",
+    })),
+    totalQuantity,
+    totalAmount: subtotal,
+    gstAmount,
+    grandTotal,
+    advanceToBePaid: formData.advanceToBePaid,
+    advanceAmount: Number(formData.toBePaidAmount) || 0,  
+    gstPercent: 18,
+    discountPercent: 0,
+    logoUrl: companyLogo,
+    terms: formData.terms.filter(Boolean),
+    paymentTerms: formData.paymentTerms || "1 DAY",
+    labDetails: { packaging: formData.indents[0]?.packaging || "" },
+  });
+
+  const handlePreview = async () => {
+    if (!validateForm())
+      return toast.error("Please fill all required PO fields first");
+    setPreviewData(buildPdfProps());
+    setShowPreview(true);
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!validateForm())
+      return toast.error("Please fill all required PO fields");
+    if (!currentGroup) return toast.error("Please select a vendor group first");
+
+    setSubmitting(true);
+    toast.loading("Generating and uploading PO...", { id: "create-po" });
+    try {
+      const pdfProps = buildPdfProps();
+      const blob = await pdf(<POPdf {...pdfProps} />).toBlob();
+      const file = new File(
+        [blob],
+        `PO-${formData.poNumber.replace(/\//g, "-")}.pdf`,
+        { type: "application/pdf" },
+      );
+      const { url } = await uploadFileToStorage(file, "image", "image_bucket");
+      const now = new Date();
+      const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+      const isExFac = normalize(formData.transportType) === "ex-factory";
+      const updates = {
+        Actual2: stamp,
+        Status: "PO Generated",
+        "Have To Make PO": "Yes",
+        PlannedLogistics: stamp,
+        ...(isExFac
+          ? {}
+          : {
+              ActualLogistics: stamp,
+              Planned9: stamp,
+              Actual9: stamp,
+              Planned3: stamp,
+            }),
+        po_number: formData.poNumber,
+        "Vendor name": formData.supplierName,
+        Vendor: formData.supplierName,
+        Rate: Number(formData.indents[0]?.rate) || 0,
+        "Lead Time To Lift (days)": formData.deliveryDate
+          ? `${formData.deliveryDate} 00:00:00`
+          : null,
+        "Total Quantity": totalQuantity,
+        "Total Amount": subtotal,
+        "PO Copy": url,
+        "Advance To Be Paid": formData.advanceToBePaid === "yes" ? "Yes" : "No",
+        "To Be Paid Amount":
+          formData.advanceToBePaid === "yes"
+            ? Number(formData.toBePaidAmount) || 0
+            : null,
+        "When To Be Paid Amount":
+          formData.advanceToBePaid === "yes" && formData.whenToBePaid
+            ? `${formData.whenToBePaid} 00:00:00`
+            : null,
+        Status5: formData.advanceToBePaid === "yes" ? "Pending" : null,
+        "PO Notes": formData.notes,
+        Packaging: formData.indents[0]?.packaging || "",
+        "Transport Type": formData.transportType || "",
+        "PO Items": formData.indents.map((item) => ({
+          indentId: item.id,
+          material: item.productName,
+          quantity: Number(item.quantity) || 0,
+          rate: Number(item.rate) || 0,
+          specs: { ...(item.specs || {}), packaging: item.packaging || "" },
+        })),
+      };
+
+      const indentIds = currentGroup.indents.map(i => i.id);
+      const { error } = await supabase
+        .from("INDENT-PO")
+        .update(updates)
+        .in('"Indent Id."', indentIds);
+
+      if (error) throw error;
+      toast.success("PO created successfully", {
+        id: "create-po",
+        description: `${currentGroup.vendorName} processed for ${currentGroup.indents.length} indents`,
+      });
+      resetForm();
+      const { data: refreshedData, error: refreshError } = await supabase
+        .from("INDENT-PO")
+        .select("*")
+        .not("Planned2", "is", null);
+      if (refreshError) throw refreshError;
+      const mapped = (refreshedData || []).map(mapRow);
+      setRows(
+        user?.firmName
+          ? mapped.filter((item) => canViewFirm(user.firmName, item.firmName))
+          : mapped,
+      );
+      setShowPreview(false);
+    } catch (error) {
+      console.error(error);
+      toast.error(error.message || "Failed to save purchase order", {
+        id: "create-po",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
-    <div className="space-y-4 p-4 md:p-6 bg-slate-50 min-h-screen">
-      <Card className="shadow-md border-none">
-        <CardHeader className="p-4 border-b border-gray-200">
-          <CardTitle className="flex items-center gap-2 text-gray-700 text-lg">
-            <FileCheck className="h-5 w-5 text-purple-600" /> Purchase Management
-          </CardTitle>
-          <CardDescription className="text-gray-500 text-sm">
-            Manage approved indents, generate purchase orders, and record advance payments.
-            {user?.firmName && user.firmName.toLowerCase() !== "all" && (
-              <span className="ml-2 text-purple-600 font-medium">• Filtered by: {user.firmName}</span>
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="p-4">
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
-            <TabsList className="grid w-full sm:w-[580px] grid-cols-3 mb-4">
-              <TabsTrigger value="approve" className="flex items-center gap-2">
-                <File className="h-4 w-4" /> Approve Indents
-                <Badge variant="secondary" className="ml-1.5 px-1.5 py-0.5 text-xs">
-                  {filteredIndents.length}
-                </Badge>
-              </TabsTrigger>
-              <TabsTrigger value="history" className="flex items-center gap-2">
-                <History className="h-4 w-4" /> PO History
-                <Badge variant="secondary" className="ml-1.5 px-1.5 py-0.5 text-xs">
-                  {filteredPOs.length}
-                </Badge>
-              </TabsTrigger>
-              <TabsTrigger value="advancePayment" className="flex items-center gap-2">
-                <Wallet className="h-4 w-4" /> Advance Payment
-                <Badge variant="secondary" className="ml-1.5 px-1.5 py-0.5 text-xs">
-                  {filteredPaymentIndents.length}
-                </Badge>
-              </TabsTrigger>
-            </TabsList>
-            <div className="mb-4 p-4 bg-purple-50/50 rounded-lg">
-              <div className="flex items-center gap-2 mb-3">
-                <Filter className="h-4 w-4 text-gray-500" />
-                <Label className="text-sm font-medium">Filters</Label>
-                <Button variant="outline" size="sm" onClick={clearAllFilters} className="ml-auto bg-white">
-                  Clear All
-                </Button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <Select value={filters.vendorName} onValueChange={(value) => handleFilterChange("vendorName", value)}>
-                  <SelectTrigger className="h-9 bg-white">
-                    <SelectValue placeholder="All Vendors" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Vendors</SelectItem>
-                    {vendorOptions.map((vendor) => (
-                      <SelectItem key={vendor} value={vendor}>
-                        {vendor}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {activeTab !== "advancePayment" && (
-                  <Select value={filters.rawMaterialName} onValueChange={(value) => handleFilterChange("rawMaterialName", value)}>
-                    <SelectTrigger className="h-9 bg-white">
-                      <SelectValue placeholder="All Materials" />
+    <div className="grid w-full rounded-md place-items-center bg-gradient-to-br from-blue-100 via-purple-50 to-blue-50">
+      <div className="flex justify-between w-full p-5">
+        <div className="flex items-center gap-2">
+          <FilePlus2 size={50} className="text-primary" />
+          <div>
+            <h1 className="text-2xl font-bold text-primary">
+              Create or Revise PO
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Create purchase order for approved indents using the current PO
+              flow
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="self-start bg-white"
+          onClick={() => navigate("/arrange-logistics")}
+        >
+          Arrange Logistics
+        </Button>
+      </div>
+
+      <div className="max-w-6xl sm:p-4">
+        <Tabs
+          defaultValue="create"
+          onValueChange={(value) => {
+            setMode(value === "revise" ? "revise" : "create");
+            resetForm();
+          }}
+        >
+          <TabsList className="w-full h-10 rounded-none">
+            <TabsTrigger value="create">Create</TabsTrigger>
+            <TabsTrigger value="revise">Revise</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <form onSubmit={handleSubmit} className="flex flex-col items-center">
+          <div className="w-full p-4 space-y-4 bg-white rounded-sm shadow-md">
+            {user?.firmName === "all" && (
+              <div className="flex flex-col items-center justify-center p-4 mb-4 border rounded-md bg-blue-50/50 border-primary/20">
+                <Label className="mb-2 text-lg font-bold text-primary">Choose Firm for PO</Label>
+                <div className="w-full max-w-md">
+                  <Select
+                    value={selectedFirm?.id || ""}
+                    onValueChange={(value) => {
+                      const firm = firms.find((f) => f.id === value);
+                      setSelectedFirm(firm);
+                      resetForm();
+                    }}
+                  >
+                    <SelectTrigger className="w-full h-12 text-lg bg-white border-2 border-primary/30">
+                      <SelectValue placeholder="Select the firm to generate PO for" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Materials</SelectItem>
-                      {materialOptions.map((material) => (
-                        <SelectItem key={material} value={material}>
-                          {material}
+                      {firms.map((f) => (
+                        <SelectItem key={f.id} value={f.id}>
+                          {f.firm_name}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+                {!selectedFirm && (
+                  <p className="mt-2 text-sm text-red-500 font-medium">Please select a firm before proceeding</p>
                 )}
-                <Select value={filters.firmName} onValueChange={(value) => handleFilterChange("firmName", value)}>
-                  <SelectTrigger className="h-9 bg-white">
-                    <SelectValue placeholder="All Firms" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Firms</SelectItem>
-                    {firmOptions.map((firm) => (
-                      <SelectItem key={firm} value={firm}>
-                        {firm}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              </div>
+            )}
+
+            <div className="flex items-center justify-center gap-6 p-4 rounded">
+              <img src={companyLogo} alt="Company Logo" className="h-44 w-44 object-contain rounded" />
+              <div className="text-center">
+                <h1 className="text-2xl font-bold uppercase tracking-tight text-primary">
+                  {selectedFirm?.firm_name || "PAREKH GALLERIUM"}
+                </h1>
+                <p className="text-sm font-medium text-muted-foreground">
+                  {selectedFirm?.address || "Shri Ram Business Park , Block - C, 2nd floor , Room No. 212"}
+                </p>
+                <p className="text-sm font-semibold text-primary/80">Phone No: {selectedFirm?.phone || "+91 7223844007"}</p>
               </div>
             </div>
-            <TabsContent value="approve" className="flex-1 flex flex-col mt-0">
-              {renderTableSection(
-                "approve",
-                "Approved Indents (Ready for PO)",
-                "Select an indent to generate its purchase order.",
-                filteredIndents,
-                allIndentColumnsMeta,
-                visibleIndentColumns,
-                loading,
-                !!error,
-                error
-              )}
-            </TabsContent>
-            <TabsContent value="history" className="flex-1 flex flex-col mt-0">
-              {renderTableSection(
-                "history",
-                "Purchase Order History",
-                "View all generated purchase orders.",
-                filteredPOs,
-                allPoColumnsMeta,
-                visiblePoColumns,
-                loading,
-                !!error,
-                error
-              )}
-            </TabsContent>
-            <TabsContent value="advancePayment" className="flex-1 flex flex-col mt-0">
-              {renderTableSection(
-                "advancePayment",
-                "Advance Payments Needed",
-                "Record advance payments for approved indents.",
-                filteredPaymentIndents, 
-                ADVANCE_PAYMENT_COLUMNS_META,
-                visiblePaymentColumns,
-                paymentLoading,
-                !!paymentError,
-                paymentError
-              )}
-            </TabsContent>
-          </Tabs>
-        </CardContent>
-      </Card>
-      {isModalOpen && (
-        <Dialog open={isModalOpen} onOpenChange={closeModal}>
-          <DialogContent className="sm:max-w-lg md:max-w-xl lg:max-w-2xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader className="border-b pb-4 mb-4">
-              <DialogTitle className="text-lg leading-6 font-medium text-gray-900 flex items-center">
-                <FileCheck className="h-6 w-6 text-purple-600 mr-3" /> Generate PO for Indent ID:{" "}
-                <span className="font-bold text-purple-600 ml-1">{selectedIndent?.id}</span>
-              </DialogTitle>
-              <DialogDescription className="mt-1 text-sm text-gray-500">
-                Vendor: {selectedIndent?.vendorName || "N/A"} | Material: {selectedIndent?.rawMaterialName || "N/A"}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="px-0 py-2 sm:px-0">
-              <div className="mb-6">
-                <Label htmlFor="haveToPO" className="block text-sm font-medium text-gray-700 mb-2">
-                  Generate PO for this Indent?<span className="text-red-500">*</span>
-                </Label>
-                <Select
-                  onValueChange={handleHaveToPOChange}
-                  value={haveToPO}
-                >
-                  <SelectTrigger className={`w-full rounded-md shadow-sm sm:text-sm ${!haveToPO && poErrors.haveToPO ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}>
-                    <SelectValue placeholder="-- Select an option --" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="yes">Yes</SelectItem>
-                    <SelectItem value="no">No</SelectItem>
-                  </SelectContent>
-                </Select>
-                {poErrors.haveToPO && <p className="mt-1 text-xs text-red-500">{poErrors.haveToPO}</p>}
+
+            {selectedFirm && rows.length === 0 && (
+              <div className="p-4 mx-4 text-center border-2 border-red-200 border-dashed rounded-lg bg-red-50/50">
+                <p className="text-sm font-bold text-red-600">
+                  No pending indents found for "{selectedFirm.firm_name}"
+                </p>
+                <p className="mt-1 text-xs text-red-500">
+                  Please verify that the Firm Name in your indents matches the name in your Firms table exactly.
+                </p>
               </div>
-              {haveToPO === "yes" && (
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
-                    <div>
-                      <Label htmlFor="quantity" className="block text-sm font-medium text-gray-700">Indent Quantity</Label>
-                      <Input
-                        type="text"
-                        id="quantity"
-                        name="quantity"
-                        value={selectedIndent?.approvedQty || ""}
-                        readOnly
-                        className="mt-1 block w-full rounded-md border-gray-300 bg-gray-100 shadow-sm sm:text-sm"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="totalQty" className="block text-sm font-medium text-gray-700">PO Total Quantity</Label>
-                      <Input
-                        type="number"
-                        step="any"
-                        id="totalQty"
-                        name="totalQty"
-                        value={formData.totalQty}
-                        onChange={handleInputChange}
-                        placeholder="PO Total Quantity"
-                        className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${poErrors.totalQty ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
-                      />
-                      {poErrors.totalQty && <p className="text-red-500 text-xs mt-1">{poErrors.totalQty}</p>}
-                    </div>
-                    <div>
-                      <Label htmlFor="rate" className="block text-sm font-medium text-gray-700">Rate <span className="text-red-500">*</span></Label>
-                      <Input
-                        type="number"
-                        step="any"
-                        id="rate"
-                        name="rate"
-                        value={formData.rate}
-                        onChange={handleInputChange}
-                        placeholder="Rate"
-                        className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${poErrors.rate ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
-                      />
-                      {poErrors.rate && <p className="text-red-500 text-xs mt-1">{poErrors.rate}</p>}
-                    </div>
-                    <div>
-                      <Label htmlFor="totalAmount" className="block text-sm font-medium text-gray-700">Total Amount</Label>
-                      <Input
-                        type="text"
-                        id="totalAmount"
-                        name="totalAmount"
-                        value={formData.totalAmount}
-                        readOnly
-                        className="mt-1 block w-full rounded-md border-gray-300 bg-gray-100 shadow-sm sm:text-sm"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="leadTimeToLift" className="block text-sm font-medium text-gray-700">Lead Time (Days) <span className="text-red-500">*</span></Label>
-                      <Input
-                        type="number"
-                        id="leadTimeToLift"
-                        name="leadTimeToLift"
-                        value={formData.leadTimeToLift}
-                        onChange={handleInputChange}
-                        placeholder="Lead Time To Lift"
-                        className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${poErrors.leadTimeToLift ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
-                      />
-                      {poErrors.leadTimeToLift && <p className="text-red-500 text-xs mt-1">{poErrors.leadTimeToLift}</p>}
-                    </div>
-                    <div>
-                      <Label htmlFor="alumina" className="block text-sm font-medium text-gray-700">Alumina % <span className="text-red-500">*</span></Label>
-                      <Input
-                        type="number"
-                        step="any"
-                        id="alumina"
-                        name="alumina"
-                        value={formData.alumina}
-                        onChange={handleInputChange}
-                        placeholder="Alumina %"
-                        className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${poErrors.alumina ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
-                      />
-                      {poErrors.alumina && <p className="text-red-500 text-xs mt-1">{poErrors.alumina}</p>}
-                    </div>
-                    <div>
-                      <Label htmlFor="iron" className="block text-sm font-medium text-gray-700">Iron % <span className="text-red-500">*</span></Label>
-                      <Input
-                        type="number"
-                        step="any"
-                        id="iron"
-                        name="iron"
-                        value={formData.iron}
-                        onChange={handleInputChange}
-                        placeholder="Iron %"
-                        className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${poErrors.iron ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
-                      />
-                      {poErrors.iron && <p className="text-red-500 text-xs mt-1">{poErrors.iron}</p>}
-                    </div>
-                    <div className="md:col-span-1">
-                      <Label htmlFor="poFile" className="block text-sm font-medium text-gray-700">Upload PO Copy</Label>
-                      <div className="relative flex items-center justify-center h-10 border border-dashed border-purple-200 rounded-md bg-purple-50 cursor-pointer hover:bg-purple-100 mt-1">
-                        <Input
-                          type="file"
-                          id="poFile"
-                          name="poFile"
-                          onChange={handleFileUpload}
-                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                        />
-                        <Upload className="h-4 w-4 text-purple-500 mr-2" />
-                        <span className="text-xs text-purple-600 truncate max-w-[calc(100%-30px)]">
-                          {formData.poFile ? formData.poFile.name : "Upload PO Copy"}
-                        </span>
-                      </div>
-                    </div>
-                    <div>
-                      <Label htmlFor="advanceToBePaid" className="block text-sm font-medium text-gray-700">Advance To Be Paid? <span className="text-red-500">*</span></Label>
-                      <Select
-                        onValueChange={(value) =>
-                          handleInputChange({
-                            target: { name: "advanceToBePaid", value },
-                          })
+            )}
+
+            <hr />
+            <h2 className="text-lg font-bold text-center">Purchase Order</h2>
+            <hr />
+
+            <div className="grid gap-5 px-4 py-2 text-foreground/80">
+              <div className="grid grid-cols-2 gap-x-5">
+                <div>
+                  <Label className="block mb-2">PO Number</Label>
+                  {mode === "create" ? (
+                    <Input
+                      className="h-9"
+                      value={formData.poNumber}
+                      onChange={(e) => setField("poNumber", e.target.value)}
+                      readOnly
+                    />
+                  ) : (
+                    <Popover open={poPopoverOpen} onOpenChange={setPoPopoverOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          className="w-full justify-between h-9 px-3 font-normal overflow-hidden"
+                        >
+                          <span className="truncate">{formData.poNumber || "Search PO Number..."}</span>
+                          <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <div className="flex items-center border-b px-3 p-2">
+                          <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+                          <Input
+                            placeholder="Search code..."
+                            className="h-8 border-none focus-visible:ring-0 text-xs"
+                            value={poSearch}
+                            onChange={(e) => setPoSearch(e.target.value)}
+                          />
+                        </div>
+                        <ScrollArea className="h-60">
+                          <div className="p-1">
+                            {poNumbers
+                              .filter((po) => po.toLowerCase().includes(poSearch.toLowerCase()))
+                              .map((po) => (
+                                <button
+                                  key={po}
+                                  type="button"
+                                  className="w-full text-left px-2 py-1.5 text-sm hover:bg-slate-100 rounded-sm"
+                                  onClick={() => {
+                                    setField("poNumber", po);
+                                    setPoPopoverOpen(false);
+                                  }}
+                                >
+                                  {po}
+                                </button>
+                              ))}
+                            {poNumbers.filter((po) => po.toLowerCase().includes(poSearch.toLowerCase())).length === 0 && (
+                              <p className="p-2 text-xs text-center text-gray-500">No PO found</p>
+                            )}
+                          </div>
+                        </ScrollArea>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                  {errors.poNumber && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {errors.poNumber}
+                    </p>
+                  )}
+
+                </div>
+                <div>
+                  <Label className="block mb-2">PO Date</Label>
+                  <Input
+                    className="h-9"
+                    type="date"
+                    value={formData.poDate}
+                    onChange={(e) => setField("poDate", e.target.value)}
+                  />
+                  {errors.poDate && (
+                    <p className="mt-1 text-xs text-red-500">{errors.poDate}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-x-5">
+                <div>
+                  <Label className="block mb-2">
+                    {mode === "create" ? "Supplier Name" : "Processed Vendor"}
+                  </Label>
+                  <Select
+                    value={formData.supplierName || undefined}
+                    onValueChange={(value) => setField("supplierName", value)}
+                    disabled={mode === "revise"}
+                  >
+
+                    <SelectTrigger className="w-full h-9">
+                      <SelectValue
+                        placeholder={
+                          mode === "create"
+                            ? "Select supplier"
+                            : "Select processed vendor"
                         }
-                        value={formData.advanceToBePaid}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {vendorGroups.map((group) => (
+                        <SelectItem
+                          key={group.vendorName}
+                          value={group.vendorName}
+                        >
+                          {group.vendorName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {errors.supplierName && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {errors.supplierName}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label className="block mb-2">Quotation Number</Label>
+                  <Input
+                    className="h-9"
+                    value={formData.quotationNumber}
+                    onChange={(e) =>
+                      setField("quotationNumber", e.target.value)
+                    }
+                  />
+                  {errors.quotationNumber && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {errors.quotationNumber}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label className="block mb-2">Quotation Date</Label>
+                  <Input
+                    className="h-9"
+                    type="date"
+                    value={formData.quotationDate}
+                    onChange={(e) => setField("quotationDate", e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-x-5">
+                <div>
+                  <Label className="block mb-2">Supplier Address</Label>
+                  <Input
+                    className="h-9"
+                    value={formData.supplierAddress}
+                    onChange={(e) =>
+                      setField("supplierAddress", e.target.value)
+                    }
+                  />
+                  {errors.supplierAddress && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {errors.supplierAddress}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label className="block mb-2">GSTIN</Label>
+                  <Input
+                    className="h-9"
+                    value={formData.gstin}
+                    onChange={(e) => setField("gstin", e.target.value)}
+                  />
+                  {errors.gstin && (
+                    <p className="mt-1 text-xs text-red-500">{errors.gstin}</p>
+                  )}
+                </div>
+                <div>
+                  <Label className="block mb-2">Company Email</Label>
+                  <Input
+                    className="h-9"
+                    type="email"
+                    value={formData.companyEmail}
+                    onChange={(e) => setField("companyEmail", e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-x-5">
+                <div>
+                  <Label className="block mb-2">Delivery Date</Label>
+                  <Input
+                    className="h-9"
+                    type="date"
+                    value={formData.deliveryDate}
+                    onChange={(e) => setField("deliveryDate", e.target.value)}
+                  />
+                  {errors.deliveryDate && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {errors.deliveryDate}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label className="block mb-2">Payment Terms</Label>
+                  <Input
+                    className="h-9"
+                    value={formData.paymentTerms}
+                    onChange={(e) => setField("paymentTerms", e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label className="block mb-2">
+                    Transport Type <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={formData.transportType || ""}
+                    onValueChange={(value) => setField("transportType", value)}
+                  >
+                    <SelectTrigger className="w-full h-9">
+                      <SelectValue placeholder="Select transport type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TRANSPORT_TYPE_OPTIONS.map((option) => (
+                        <SelectItem key={option} value={option}>
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {errors.transportType && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {errors.transportType}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-x-5">
+                <div>
+                  <Label className="block mb-2">Advance To Be Paid?</Label>
+                  <Select
+                    value={formData.advanceToBePaid}
+                    onValueChange={(value) =>
+                      setField("advanceToBePaid", value)
+                    }
+                  >
+                    <SelectTrigger className="w-full h-9">
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Yes</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="block mb-2">Advance Amount</Label>
+                  <Input
+                    className="h-9"
+                    type="number"
+                    value={formData.toBePaidAmount}
+                    onChange={(e) => setField("toBePaidAmount", e.target.value)}
+                    disabled={formData.advanceToBePaid !== "yes"}
+                  />
+                  {errors.toBePaidAmount && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {errors.toBePaidAmount}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <Label className="block mb-2">Advance Payment Date</Label>
+                  <Input
+                    className="h-9"
+                    type="date"
+                    value={formData.whenToBePaid}
+                    onChange={(e) => setField("whenToBePaid", e.target.value)}
+                    disabled={formData.advanceToBePaid !== "yes"}
+                  />
+                  {errors.whenToBePaid && (
+                    <p className="mt-1 text-xs text-red-500">
+                      {errors.whenToBePaid}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <hr />
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <Card className="gap-0 rounded-[3px] p-0 shadow-xs">
+                <CardHeader className="px-5 py-2 bg-muted">
+                  <CardTitle className="text-center">
+                    Our Commercial Details
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-5 text-sm">
+                  <p>
+                    <span className="font-semibold">GSTIN:</span>{" "}
+                    {selectedFirm?.gstin || "22AAHCP9274B1ZI"}
+                  </p>
+                  <p>
+                    <span className="font-semibold">Pan No.</span> {selectedFirm?.pan || "AAHCP9274B"}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="gap-0 rounded-[3px] p-0 shadow-xs">
+                <CardHeader className="px-5 py-2 bg-muted">
+                  <CardTitle className="text-center">Billing Address</CardTitle>
+                </CardHeader>
+                <CardContent className="p-5 text-sm">
+                  <p>{selectedFirm?.billing_address || "Kh No 297/2, Akoli, Block Dharsiwa, Raipur"}</p>
+                </CardContent>
+              </Card>
+              <Card className="gap-0 rounded-[3px] p-0 shadow-xs">
+                <CardHeader className="px-5 py-2 bg-muted">
+                  <CardTitle className="flex items-center justify-between text-center">
+                    Destination Address
+                    {formData.supplierName && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditDestination((prev) => !prev)}
+                        className="w-6 h-6 p-0 hover:bg-gray-200"
                       >
-                        <SelectTrigger className={`mt-1 w-full rounded-md shadow-sm sm:text-sm ${poErrors.advanceToBePaid ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}>
-                          <SelectValue placeholder="-- Select --" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="yes">Yes</SelectItem>
-                          <SelectItem value="no">No</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {poErrors.advanceToBePaid && (
-                        <p className="text-red-500 text-xs mt-1">{poErrors.advanceToBePaid}</p>
+                        {editDestination ? (
+                          <Save size={14} className="text-green-600" />
+                        ) : (
+                          <Pencil size={14} className="text-gray-600" />
+                        )}
+                      </Button>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-5 text-sm">
+                  {formData.supplierName ? (
+                    <>
+                      {editDestination ? (
+                        <div className="flex items-center gap-2 mt-1">
+                          <Input
+                            value={formData.destination}
+                            onChange={(e) =>
+                              setField("destination", e.target.value)
+                            }
+                            className="text-sm h-7"
+                            placeholder="Enter destination address"
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setField("destination", "")}
+                            className="w-6 h-6 p-0 hover:bg-red-100"
+                          >
+                            <Trash size={12} className="text-red-500" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <p>{formData.destination || "Destination not set"}</p>
                       )}
-                    </div>
-                    {formData.advanceToBePaid === "yes" && (
-                      <>
-                        <div>
-                          <Label htmlFor="toBePaidAmount" className="block text-sm font-medium text-gray-700">Advance Amount <span className="text-red-500">*</span></Label>
+                    </>
+                  ) : (
+                    <p className="text-center text-gray-400">Select Supplier</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            <hr />
+
+            <div>
+              <Label className="block mb-2">Description</Label>
+              <Textarea
+                placeholder="Enter message"
+                className="resize-y"
+                value={formData.description}
+                onChange={(e) => setField("description", e.target.value)}
+              />
+            </div>
+            <div>
+              <Label className="block mb-2">PO Notes</Label>
+              <Textarea
+                placeholder="Describe goods / remarks"
+                className="resize-y"
+                value={formData.notes}
+                onChange={(e) => setField("notes", e.target.value)}
+              />
+              {errors.notes && (
+                <p className="mt-1 text-xs text-red-500">{errors.notes}</p>
+              )}
+            </div>
+
+            <hr />
+
+            <div className="grid mx-4">
+              <div className="min-w-full w-full overflow-x-auto rounded-[3px]">
+                <Table>
+                  <TableHeader className="bg-muted">
+                    <TableRow>
+                      <TableHead>S/N</TableHead>
+                      <TableHead>Internal Code</TableHead>
+                      <TableHead>Product</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Qty</TableHead>
+                      <TableHead>Unit</TableHead>
+                      <TableHead>Rate</TableHead>
+                      <TableHead>GST (%)</TableHead>
+                      <TableHead>Discount (%)</TableHead>
+                      <TableHead>Amount</TableHead>
+
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {formData.indents.map((item, index) => (
+                      <TableRow key={`${item.id}-${index}`}>
+                        <TableCell>{index + 1}</TableCell>
+                        <TableCell className="font-medium">
+                          {item.indentNumber || "N/A"}
+                        </TableCell>
+                        <TableCell>
+                          {item.productName || "No Product"}
+                        </TableCell>
+                        <TableCell>
+                          {item.specifications || (
+                            <span className="italic text-muted-foreground">
+                              No description
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
                           <Input
                             type="number"
-                            step="any"
-                            id="toBePaidAmount"
-                            name="toBePaidAmount"
-                            value={formData.toBePaidAmount}
-                            onChange={handleInputChange}
-                            placeholder="To Be Paid Amount"
-                            className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${poErrors.toBePaidAmount ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
+                            className="w-20 text-center h-9 bg-gray-50"
+                            value={item.quantity || 0}
+                            readOnly
                           />
-                          {poErrors.toBePaidAmount && (
-                            <p className="text-red-500 text-xs mt-1">{poErrors.toBePaidAmount}</p>
-                          )}
-                        </div>
-                        <div>
-                          <Label htmlFor="whenToBePaid" className="block text-sm font-medium text-gray-700">When To Be Paid <span className="text-red-500">*</span></Label>
+                        </TableCell>
+                        <TableCell>
                           <Input
-                            type="date"
-                            id="whenToBePaid"
-                            name="whenToBePaid"
-                            value={formData.whenToBePaid}
-                            onChange={handleInputChange}
-                            placeholder="Payment Date"
-                            className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${poErrors.whenToBePaid ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
+                            className="w-20 text-center h-9 bg-gray-50"
+                            value={item.unit || ""}
+                            readOnly
                           />
-                          {poErrors.whenToBePaid && (
-                            <p className="text-red-500 text-xs mt-1">{poErrors.whenToBePaid}</p>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="notes" className="block text-sm font-medium text-gray-700">PO Notes/Remarks</Label>
-                    <Textarea
-                      id="notes"
-                      name="notes"
-                      rows={3}
-                      value={formData.notes}
-                      onChange={handleInputChange}
-                      placeholder="Notes"
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm sm:text-sm focus:border-purple-500 focus:ring-purple-500"
-                    />
-                  </div>
-                  <DialogFooter className="pt-5 sm:pt-6 flex flex-col sm:flex-row-reverse gap-3 sm:gap-0 sm:justify-start">
-                    <Button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className={`w-full sm:w-auto inline-flex justify-center py-2.5 px-6 border border-transparent rounded-md shadow-sm text-sm font-semibold text-white ${isSubmitting ? "bg-purple-400 cursor-not-allowed" : "bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"}`}
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin my-0.5" /> Submitting...
-                        </>
-                      ) : (
-                        "Submit PO"
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={closeModal}
-                      className="w-full sm:w-auto inline-flex justify-center py-2.5 px-6 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400 sm:mr-3"
-                    >
-                      Cancel
-                    </Button>
-                  </DialogFooter>
-                </form>
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            className="w-24 text-center h-9"
+                            value={item.rate || ""}
+                            onChange={(e) => updateIndent(index, "rate", e.target.value)}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            className="w-16 text-center h-9 bg-gray-50"
+                            value={item.gstPercent || 0}
+                            readOnly
+                          />
+
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            className="w-16 text-center h-9"
+                            value={item.discountPercent || ""}
+                            onChange={(e) => updateIndent(index, "discountPercent", e.target.value)}
+                          />
+
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          Rs. {money(lineTotal(item))}
+                        </TableCell>
+
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              {errors.indents && (
+                <p className="mt-2 text-xs text-red-500">{errors.indents}</p>
               )}
-              {haveToPO === "no" && (
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  <p className="text-sm text-gray-600">
-                    You've selected not to generate a PO for this indent. Clicking submit will mark this indent as processed without PO details.
-                  </p>
-                  <DialogFooter className="pt-5 sm:pt-6 flex flex-col sm:flex-row-reverse gap-3 sm:gap-0 sm:justify-start">
-                    <Button
-                      type="submit"
-                      disabled={isSubmitting}
-                      className={`w-full sm:w-auto inline-flex justify-center py-2.5 px-6 border border-transparent rounded-md shadow-sm text-sm font-semibold text-white ${isSubmitting ? "bg-purple-400 cursor-not-allowed" : "bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"}`}
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin my-0.5" /> Submitting...
-                        </>
-                      ) : (
-                        "Submit as No PO"
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={closeModal}
-                      className="w-full sm:w-auto inline-flex justify-center py-2.5 px-6 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400 sm:mr-3"
-                    >
-                      Cancel
-                    </Button>
-                  </DialogFooter>
-                </form>
+              <div className="flex justify-end p-4">
+                <div className="w-80 space-y-3">
+                  <div className="rounded-[3px] bg-muted">
+                    <p className="flex justify-between py-2 px-7">
+                      <span>Total:</span>
+                      <span className="text-end">{money(subtotal)}</span>
+                    </p>
+                    <hr />
+                    <p className="flex justify-between py-2 px-7">
+                      <span>GST Amount:</span>
+                      <span className="text-end">{money(gstAmount)}</span>
+                    </p>
+                    <hr />
+                    <p className="flex justify-between py-2 font-bold px-7">
+                      <span>Grand Total:</span>
+                      <span className="text-end">{money(grandTotal)}</span>
+                    </p>
+                  </div>
+                  {formData.advanceToBePaid === "yes" && advanceAmount > 0 && (
+                    <div className="rounded-[3px] bg-muted">
+                      <p className="py-2 font-semibold border-b px-7">
+                        Advance To Be Paid
+                      </p>
+                      <p className="flex justify-between py-2 px-7">
+                        <span>Advance Amount:</span>
+                        <span className="text-end">{money(advanceAmount)}</span>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <hr />
+
+            <div>
+              <p className="px-3 text-sm font-semibold">THE ABOVE</p>
+              <div>
+                {formData.terms.map((term, index) => {
+                  const writable = termEditIndex === index;
+                  return (
+                    <div className="flex items-center" key={index}>
+                      <span className="px-3">{index + 1}.</span>
+                      <Input
+                        className={`h-6 rounded-xs border-transparent shadow-none ${writable ? "border-b border-b-foreground" : ""}`}
+                        readOnly={!writable}
+                        value={term}
+                        onChange={(e) => updateTerm(index, e.target.value)}
+                      />
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        onClick={() => {
+                          if (writable) setTermEditIndex(-1);
+                          else if (termEditIndex === -1)
+                            setTermEditIndex(index);
+                          else
+                            toast.error(
+                              `Please save term ${termEditIndex + 1} before editing`,
+                            );
+                        }}
+                      >
+                        {!writable ? <Pencil size={20} /> : <Save size={20} />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        onClick={() => removeTerm(index)}
+                      >
+                        <Trash className="text-red-300" size={20} />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-end w-full p-3">
+                <Button
+                  className="w-50"
+                  variant="outline"
+                  type="button"
+                  onClick={() => {
+                    if (formData.terms.length >= 10)
+                      return toast.error("Only 10 terms are allowed");
+                    if (termEditIndex !== -1)
+                      return toast.error(
+                        `Please save term ${termEditIndex + 1} before creating`,
+                      );
+                    setFormData((prev) => ({
+                      ...prev,
+                      terms: [...prev.terms, ""],
+                    }));
+                    setTermEditIndex(formData.terms.length);
+                  }}
+                >
+                  Add Term
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid w-full max-w-6xl grid-cols-3 gap-3 p-3 m-5 rounded-md shadow-md bg-background">
+            <Button type="button" variant="outline" onClick={resetForm}>
+              Reset
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handlePreview}
+              disabled={!formData.supplierName || !formData.indents.length}
+            >
+              <Eye size={20} className="mr-2" />
+              Preview
+            </Button>
+            <Button type="submit" disabled={submitting || loading}>
+              {(submitting || loading) && (
+                <Loader size={20} color="white" aria-label="Loading Spinner" />
+              )}
+              Save And Send PO
+            </Button>
+          </div>
+        </form>
+
+        <Dialog open={showPreview} onOpenChange={setShowPreview}>
+          <DialogContent className="h-[95vh] w-[95vw] max-w-[95vw] gap-0 p-0">
+            <DialogHeader className="px-6 py-4 border-b">
+              <DialogTitle>PO Preview</DialogTitle>
+            </DialogHeader>
+            <div className="h-[calc(95vh-70px)] w-full">
+              {previewData && (
+                <PDFViewer
+                  width="100%"
+                  height="100%"
+                  showToolbar
+                  style={{ border: "none" }}
+                >
+                  <POPdf {...previewData} />
+                </PDFViewer>
               )}
             </div>
           </DialogContent>
         </Dialog>
-      )}
-
-      <Dialog open={showPaymentPopup} onOpenChange={handleClosePaymentPopup}>
-        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
-          <DialogHeader className="border-b pb-4 mb-4">
-            <DialogTitle className="text-lg leading-6 font-medium text-gray-900 flex items-center">
-              <Wallet className="h-6 w-6 text-purple-600 mr-3" /> Record Advance Payment
-            </DialogTitle>
-            <DialogDescription className="mt-1 text-sm text-gray-500">
-              For Indent ID: <span className="font-bold text-purple-600">{selectedPaymentIndent?.indentId || "N/A"}</span> | Vendor: <span className="font-bold text-purple-600">{selectedPaymentIndent?.vendorName || "N/A"}</span>
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handlePaymentSubmit} className="space-y-4 py-2 px-0">
-            <div>
-              <Label htmlFor="amount" className="block text-sm font-medium text-gray-700">Amount to be Paid <span className="text-red-500">*</span></Label>
-              <Input
-                id="amount"
-                name="amount"
-                type="number"
-                step="any"
-                value={paymentFormData.amount}
-                onChange={handlePaymentInputChange}
-                className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${paymentFormErrors.amount ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
-              />
-              {paymentFormErrors.amount && <p className="text-red-500 text-xs mt-1">{paymentFormErrors.amount}</p>}
-            </div>
-            <div>
-              <Label htmlFor="paymentDate" className="block text-sm font-medium text-gray-700">Payment Date <span className="text-red-500">*</span></Label>
-              <Input
-                id="paymentDate"
-                name="paymentDate"
-                type="date"
-                value={paymentFormData.paymentDate}
-                onChange={handlePaymentInputChange}
-                className={`mt-1 block w-full rounded-md shadow-sm sm:text-sm ${paymentFormErrors.paymentDate ? "border-red-500 ring-1 ring-red-500" : "border-gray-300 focus:border-purple-500 focus:ring-purple-500"}`}
-              />
-              {paymentFormErrors.paymentDate && <p className="text-red-500 text-xs mt-1">{paymentFormErrors.paymentDate}</p>}
-            </div>
-            <DialogFooter className="pt-5 sm:pt-6 flex flex-col sm:flex-row-reverse gap-3 sm:gap-0 sm:justify-start">
-              <Button type="submit" disabled={isSubmittingPayment} className={`w-full sm:w-auto inline-flex justify-center py-2.5 px-6 border border-transparent rounded-md shadow-sm text-sm font-semibold text-white ${isSubmittingPayment ? "bg-purple-400 cursor-not-allowed" : "bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500"}`}>
-                {isSubmittingPayment ? <><Loader2 className="mr-2 h-4 w-4 animate-spin my-0.5"/>Processing...</> : "Submit Payment"}
-              </Button>
-              <Button type="button" variant="outline" onClick={handleClosePaymentPopup} className="w-full sm:w-auto inline-flex justify-center py-2.5 px-6 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400 sm:mr-3">Cancel</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      </div>
     </div>
   );
-};
-
-export default GeneratePurchaseOrder;
+}
