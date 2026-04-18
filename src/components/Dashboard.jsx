@@ -583,10 +583,10 @@ const pendingStagesData = useMemo(() => {
                       {dateRange?.from ? (
                         dateRange.to ? (
                           <>
-                            {format(dateRange.from, "MMM dd")} - {format(dateRange.to, "MMM dd")}
+                            {format(dateRange.from, "dd-MM-yyyy")} - {format(dateRange.to, "dd-MM-yyyy")}
                           </>
                         ) : (
-                          format(dateRange.from, "MMM dd, y")
+                          format(dateRange.from, "dd-MM-yyyy")
                         )
                       ) : (
                         <span>Select dates</span>
@@ -919,7 +919,7 @@ const pendingStagesData = useMemo(() => {
                             purchaseTabTables.pendingLift.map((po) => (
                               <TableRow key={po.id} className="hover:bg-amber-50/50">
                                 <TableCell className="font-semibold text-purple-600 py-2 px-3">{po.rlNo}</TableCell>
-                                <TableCell>{po.date ? format(po.date, "dd-MMM-yyyy") : "N/A"}</TableCell>
+                                <TableCell>{po.date ? format(po.date, "dd-MM-yyyy") : "N/A"}</TableCell>
                                 <TableCell>{po.firmName || "N/A"}</TableCell>
                                 <TableCell>{po.vendorName}</TableCell>
                                 <TableCell className="max-w-xs truncate">{po.material}</TableCell>

@@ -40,8 +40,9 @@ const SUPABASE_COLUMNS = {
   approvedQty: "Approved Qty",
   notes: "Notes",
   planned: "Planned2",
+  plannedPOEntry: "Planned3",
   poCopyLink: "PO Copy",
-  poNumber: "Purchase Order no.",
+  poNumber: "po_number",
   tallyEntryTimestamp: "Actual3",
 };
 
@@ -62,28 +63,18 @@ const formatSheetDateString = (dateValue) => {
       const [, year, month, day] = gvizMatch.map(Number);
       const parsedDate = new Date(year, month, day);
       if (!isNaN(parsedDate.getTime())) {
-        return new Intl.DateTimeFormat("en-GB", {
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        }).format(parsedDate);
+        const d = String(parsedDate.getDate()).padStart(2, "0");
+        const m = String(parsedDate.getMonth() + 1).padStart(2, "0");
+        const y = parsedDate.getFullYear();
+        return `${d}-${m}-${y}`;
       }
     }
     return dateValue;
   }
-  return new Intl.DateTimeFormat("en-GB", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  }).format(dateObj);
+  const d = String(dateObj.getDate()).padStart(2, "0");
+  const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const y = dateObj.getFullYear();
+  return `${d}-${m}-${y}`;
 };
 
 // Column Definitions
@@ -151,7 +142,7 @@ export default function TallyEntry() {
           _id: `supabase-${row.id}`,
           indentId: (row["Indent Id."] || "").trim(),
           firmName: String(row["Firm Name"] || ""),
-          poNumber: String(row["Purchase Order no."] || ""),
+          poNumber: String(row["po_number"] || row["Purchase Order no."] || ""),
           deliveryOrderNo: String(row["Delivery Order No."] || ""),
           vendorName: String(row["Vendor"] || ""),
           rawMaterialName: String(row["Material"] || ""),
@@ -159,8 +150,9 @@ export default function TallyEntry() {
           typeOfIndent: String(row["Priority"] || ""),
           poCopyLink: String(row["PO Copy"] || ""),
           notes: String(row["Notes"] || ""),
-          planned: String(row["Planned2"] || ""),
-          tallyEntryTimestamp: row["Actual3"] || "",
+          planned: formatSheetDateString(row["Planned2"]),
+          plannedPOEntry: formatSheetDateString(row["Planned3"]),
+          tallyEntryTimestamp: formatSheetDateString(row["Actual3"]),
         };
         return rowData;
       }).filter((row) => row.indentId);
@@ -209,11 +201,12 @@ export default function TallyEntry() {
     const pending = [];
     const completed = [];
     sheetData.forEach((row) => {
-      const hasDeliveryOrder = row.deliveryOrderNo && row.deliveryOrderNo.trim() !== "";
+      const isReadyForTally = row.plannedPOEntry && row.plannedPOEntry.trim() !== "";
       const hasTallyTimestamp = row.tallyEntryTimestamp && row.tallyEntryTimestamp.trim() !== "";
-      if (hasDeliveryOrder && !hasTallyTimestamp) {
+      
+      if (isReadyForTally && !hasTallyTimestamp) {
         pending.push(row);
-      } else if (hasDeliveryOrder && hasTallyTimestamp) {
+      } else if (isReadyForTally && hasTallyTimestamp) {
         completed.push(row);
       }
     });

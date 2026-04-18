@@ -28,11 +28,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AuthContext } from "../context/AuthContext";
 import { toast } from "sonner";
 import { supabase } from "../lib/supabase";
+import { uploadFileToStorage } from "../utils/storageUtils";
 
 // Supabase Tables
 const LIFT_ACCOUNTS_TABLE = "LIFT-ACCOUNTS";
-const DRIVE_FOLDER_ID = "1k0dGpTHzg7YHiAjIpVpz6smcy28g1OIM";
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxeWI6jn9sOuAzGIV8cM_1EzL0KOpXMiyTfSWLwJ9YEGiHI280Ki368Ulu3F-V9aEcd/exec";
+const BUCKET_NAME = "image_bucket";
 
 // Column Indices for LIFT-ACCOUNTS (0-based) - R is 17
 const BILL_COPY_COL = 17;
@@ -96,59 +96,24 @@ const PROCESSED_RECEIPTS_COLUMNS_META = [
   { header: "Receipt Timestamp (Col U)", dataKey: "actual1Timestamp", toggleable: true },
 ];
 
-// Helper to parse Google Sheet gviz JSON response
-const parseGvizResponse = (text, sheetNameForError) => {
-  if (!text || !text.includes("google.visualization.Query.setResponse")) {
-    console.error(`[ParseGviz] Invalid or empty gviz response for ${sheetNameForError}:`, text ? text.substring(0, 500) : "Response was null/empty");
-    throw new Error(`Invalid response format from Google Sheets for ${sheetNameForError}. Ensure it's link-shareable as 'Viewer'.`);
-  }
-  const jsonStart = text.indexOf("{");
-  const jsonEnd = text.lastIndexOf("}");
-  if (jsonStart === -1 || jsonEnd === -1) {
-    console.error(`[ParseGviz] JSON delimiters not found for ${sheetNameForError}. Text:`, text.substring(0, 200));
-    throw new Error(`Could not parse JSON from Google Sheets response for ${sheetNameForError}. Text: ${text.substring(0, 200)}`);
-  }
-  const jsonString = text.substring(jsonStart, jsonEnd + 1);
-  try {
-    const data = JSON.parse(jsonString);
-    if (!data.table || !data.table.cols) {
-      console.warn(`[ParseGviz] No data.table or cols in ${sheetNameForError} or sheet is empty`, data);
-      return { cols: [], rows: [] };
-    }
-    if (!data.table.rows) {
-      console.warn(`[ParseGviz] No data.table.rows in ${sheetNameForError}, treating as empty.`, data);
-      data.table.rows = [];
-    }
-    return data.table;
-  } catch (e) {
-    console.error(`[ParseGviz] Error parsing JSON for ${sheetNameForError}:`, e, "JSON String:", jsonString.substring(0, 500));
-    throw new Error(`Failed to parse JSON response from Google Sheets for ${sheetNameForError}. Error: ${e.message}`);
-  }
-};
-
 // Function to format date string
 const formatDateString = (dateValue) => {
   if (!dateValue || typeof dateValue !== "string" || !dateValue.trim()) {
     return "";
   }
   let parsedDate;
-  const gvizMatch = dateValue.match(/^Date\((\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+))?/);
+  const gvizMatch = dateValue.match(/^Date\((\d+),(\d+),(\d+)/);
   if (gvizMatch) {
-    const [, year, month, day, hours, minutes, seconds] = gvizMatch.map(Number);
-    parsedDate = new Date(year, month, day, hours || 0, minutes || 0, seconds || 0);
+    const [, year, month, day] = gvizMatch.map(Number);
+    parsedDate = new Date(year, month, day);
   } else {
     parsedDate = new Date(dateValue);
   }
   if (!isNaN(parsedDate.getTime())) {
-    return new Intl.DateTimeFormat("en-GB", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(parsedDate).replace(/,/g, "");
+    const d = String(parsedDate.getDate()).padStart(2, "0");
+    const m = String(parsedDate.getMonth() + 1).padStart(2, "0");
+    const y = parsedDate.getFullYear();
+    return `${d}-${m}-${y}`;
   }
   return dateValue;
 };
@@ -419,28 +384,15 @@ export default function ReceiptCheck() {
     return Object.keys(newErrors).length === 0;
   };
   
-  const uploadFileToDrive = async (file, folderId = "1k0dGpTHzg7YHiAjIpVpz6smcy28g1OIM") => {
+  const uploadFile = async (file) => {
     if (!file) return "";
-    const base64Data = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = error => reject(error);
-    });
-
-    const uploadPayload = new FormData();
-    uploadPayload.append("action", "uploadFile");
-    uploadPayload.append("fileName", file.name);
-    uploadPayload.append("mimeType", file.type);
-    uploadPayload.append("base64Data", base64Data);
-    uploadPayload.append("folderId", folderId);
-
-    const response = await fetch(SCRIPT_URL, { method: "POST", body: uploadPayload });
-    if (!response.ok) throw new Error(`Drive upload failed: ${await response.text()}`);
-    
-    const result = await response.json();
-    if (!result.success) throw new Error(result.message || "Apps Script upload failed");
-    return result.fileUrl;
+    try {
+      const { url } = await uploadFileToStorage(file, BUCKET_NAME);
+      return url;
+    } catch (error) {
+      console.error("Error uploading file to Supabase:", error);
+      throw error;
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -457,12 +409,12 @@ export default function ReceiptCheck() {
       const receiptFolderId = "1k0dGpTHzg7YHiAjIpVpz6smcy28g1OIM";
       let physicalImageUrl = formData.physicalImageUrl || "";
       if (formData.physicalImageFile) {
-        physicalImageUrl = await uploadFileToDrive(formData.physicalImageFile, receiptFolderId);
+        physicalImageUrl = await uploadFile(formData.physicalImageFile);
       }
   
       let weightSlipImageUrl = formData.weightSlipImageUrl || "";
       if (formData.weightSlipFile) {
-        weightSlipImageUrl = await uploadFileToDrive(formData.weightSlipFile, receiptFolderId);
+        weightSlipImageUrl = await uploadFile(formData.weightSlipFile);
       }
   
       const updatePayload = {

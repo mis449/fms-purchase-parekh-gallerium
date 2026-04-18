@@ -40,21 +40,22 @@ const parseCustomTimestamp = (timestampString) => {
 // Function to format Google Sheets date values
 const formatSheetDate = (dateValue) => {
   if (!dateValue || typeof dateValue !== "string") return dateValue || "-"
-  // Handle Google Sheets Date(YYYY,MM,DD,HH,MM,SS) format
-  const gvizMatch = dateValue.match(/^Date$$(\d+),(\d+),(\d+)(?:,(\d+),(\d+),(\d+))?$$/)
+  const dObj = new Date(dateValue)
+  if (!isNaN(dObj.getTime()) && !dateValue.startsWith("Date(")) {
+    const d = String(dObj.getDate()).padStart(2, "0")
+    const m = String(dObj.getMonth() + 1).padStart(2, "0")
+    const y = dObj.getFullYear()
+    return `${d}-${m}-${y}`
+  }
+  const gvizMatch = dateValue.match(/^Date\((\d+),(\d+),(\d+)/)
   if (gvizMatch) {
-    const [, year, month, day, hours, minutes, seconds] = gvizMatch.map(Number)
-    const parsedDate = new Date(year, month, day, hours || 0, minutes || 0, seconds || 0)
+    const [, year, month, day] = gvizMatch.map(Number)
+    const parsedDate = new Date(year, month, day)
     if (!isNaN(parsedDate.getTime())) {
-      return new Intl.DateTimeFormat("en-GB", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }).format(parsedDate)
+      const d = String(parsedDate.getDate()).padStart(2, "0")
+      const m = String(parsedDate.getMonth() + 1).padStart(2, "0")
+      const y = parsedDate.getFullYear()
+      return `${d}-${m}-${y}`
     }
   }
   return dateValue

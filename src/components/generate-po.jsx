@@ -83,9 +83,11 @@ const toDateInput = (value) => {
 };
 const formatDate = (value) => {
   const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value || ""
-    : new Intl.DateTimeFormat("en-GB").format(date);
+  if (Number.isNaN(date.getTime())) return value || "";
+  const d = String(date.getDate()).padStart(2, "0");
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const y = date.getFullYear();
+  return `${d}-${m}-${y}`;
 };
 const lineBase = (item) =>
   (Number(item.quantity) || 0) * (Number(item.rate) || 0);
@@ -137,7 +139,7 @@ const mapRow = (row) => ({
   transportType: row["Transport Type"] || "",
   dest: row["destination"] || "",
   poDate: toDateInput(row["Actual2"]),
-  deliveryDate: toDateInput(row["Lead Time To Lift (days)"]),
+  deliveryDate: toDateInput(row["Planned4"]) || toDateInput(row["Lead Time To Lift (days)"]),
   poNumber: row["po_number"] || "",
 });
 
@@ -505,27 +507,31 @@ export default function CreatePO() {
       const { url } = await uploadFileToStorage(file, "image", "image_bucket");
       const now = new Date();
       const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+      
+      const poDateObj = new Date(formData.poDate);
+      const delDateObj = new Date(formData.deliveryDate);
+      const leadTimeMs = delDateObj.getTime() - poDateObj.getTime();
+      const leadTimeDays = Math.max(0, Math.ceil(leadTimeMs / (1000 * 60 * 60 * 24)));
+
       const isExFac = normalize(formData.transportType) === "ex-factory";
       const updates = {
-        Actual2: stamp,
+        Actual2: stamp, // This triggers your NEW."Planned3" := NEW."Actual2" SQL
         Status: "PO Generated",
         "Have To Make PO": "Yes",
         PlannedLogistics: stamp,
+        "expected_requierment_date": formData.deliveryDate, 
         ...(isExFac
           ? {}
           : {
               ActualLogistics: stamp,
               Planned9: stamp,
               Actual9: stamp,
-              Planned3: stamp,
             }),
         po_number: formData.poNumber,
         "Vendor name": formData.supplierName,
         Vendor: formData.supplierName,
         Rate: Number(formData.indents[0]?.rate) || 0,
-        "Lead Time To Lift (days)": formData.deliveryDate
-          ? `${formData.deliveryDate} 00:00:00`
-          : null,
+        "Lead Time To Lift (days)": leadTimeDays,
         "Total Quantity": totalQuantity,
         "Total Amount": subtotal,
         "PO Copy": url,

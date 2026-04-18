@@ -16,54 +16,23 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { AuthContext } from "../context/AuthContext"
 import { toast } from "sonner";
 import { supabase } from "../lib/supabase";
+import { uploadFileToStorage } from "../utils/storageUtils";
 
 function formatTimestamp(timestampStr) {
-  if (!timestampStr || typeof timestampStr !== "string") {
-    return "N/A"
-  }
-  const numbers = timestampStr.match(/\d+/g)
-  if (!numbers || numbers.length < 6) {
-    const d = new Date(timestampStr)
-    if (!isNaN(d.getTime())) {
-      return d
-        .toLocaleString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        })
-        .replace(",", "")
-    }
-    return "Invalid Date"
-  }
-  const date = new Date(
-    parseInt(numbers[0]), // Year
-    parseInt(numbers[1]) - 1, // Month (0-based)
-    parseInt(numbers[2]), // Day
-    parseInt(numbers[3]), // Hours
-    parseInt(numbers[4]), // Minutes
-    parseInt(numbers[5]), // Seconds
-  )
-  return date.toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  })
+  if (!timestampStr) return "N/A";
+  const dateObj = new Date(timestampStr);
+  if (isNaN(dateObj.getTime())) return "Invalid Date";
+  const d = String(dateObj.getDate()).padStart(2, "0");
+  const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const y = dateObj.getFullYear();
+  return `${d}-${m}-${y}`;
 }
 
 // Supabase Tables
 const INDENT_PO_TABLE = "INDENT-PO";
 const LIFT_ACCOUNTS_TABLE = "LIFT-ACCOUNTS";
 const MASTER_TABLE = "Master";
-const DRIVE_FOLDER_ID = "1k0dGpTHzg7YHiAjIpVpz6smcy28g1OIM";
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxeWI6jn9sOuAzGIV8cM_1EzL0KOpXMiyTfSWLwJ9YEGiHI280Ki368Ulu3F-V9aEcd/exec";
+const BUCKET_NAME = "image_bucket";
 
 const PO_COLUMNS_META = [
   { header: "Indent Number", dataKey: "indentNo", toggleable: true, alwaysVisible: true },
@@ -481,42 +450,13 @@ export default function LiftMaterial() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const uploadFileToDrive = async (file, folderId) => {
-    if (!folderId) {
-      throw new Error("Configuration error: Drive Folder ID not specified.");
-    }
+  const uploadFile = async (file) => {
+    if (!file) return "";
     try {
-      const base64Data = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = (error) => reject(error);
-      });
-
-      const payload = new URLSearchParams();
-      payload.append("action", "uploadFile");
-      payload.append("fileName", file.name);
-      payload.append("mimeType", file.type);
-      payload.append("base64Data", base64Data);
-      payload.append("folderId", folderId);
-
-      const response = await fetch(SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: payload.toString(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Drive upload failed: ${response.status}. ${errorText}`);
-      }
-      const result = await response.json();
-      if (!result.success) {
-        throw new Error(result.message || "Failed to upload file via Apps Script");
-      }
-      return result.fileUrl;
+      const { url } = await uploadFileToStorage(file, BUCKET_NAME);
+      return url;
     } catch (error) {
-      console.error("Error uploading file to Google Drive:", error);
+      console.error("Error uploading file to Supabase:", error);
       throw error;
     }
   };
@@ -560,7 +500,7 @@ export default function LiftMaterial() {
       const timestamp = new Date().toISOString();
 
       const billImageUrl = formData.billImage 
-        ? await uploadFileToDrive(formData.billImage, DRIVE_FOLDER_ID) 
+        ? await uploadFile(formData.billImage) 
         : "";
 
       // 1. Insert into LIFT-ACCOUNTS
