@@ -32,7 +32,40 @@ import { uploadFileToStorage } from "../utils/storageUtils";
 
 // Supabase Tables
 const LIFT_ACCOUNTS_TABLE = "LIFT-ACCOUNTS";
+const PURCHASE_RETURNS_TABLE = "Purchase Returns";
 const BUCKET_NAME = "image_bucket";
+
+// Physical conditions that trigger an automatic Purchase Return
+const POOR_CONDITIONS = ["poor", "damaged"];
+
+/**
+ * Generates the next Purchase Return No. in format PR-001, PR-002...
+ * Queries the last entry from Purchase Returns table to determine the next number.
+ */
+const generatePurchaseReturnNo = async () => {
+  try {
+    const { data, error } = await supabase
+      .from(PURCHASE_RETURNS_TABLE)
+      .select('"Purchase Return No."')
+      .order("ID", { ascending: false })
+      .limit(1);
+
+    if (error) throw error;
+
+    let maxNum = 0;
+    if (data && data.length > 0 && data[0]["Purchase Return No."]) {
+      const lastNo = data[0]["Purchase Return No."];
+      // Expected format: PR-001, PR-002, etc.
+      const match = lastNo.match(/PR-(\d+)/i);
+      if (match) maxNum = parseInt(match[1], 10);
+    }
+    return `PR-${String(maxNum + 1).padStart(3, "0")}`;
+  } catch (err) {
+    console.error("[generatePurchaseReturnNo] Error:", err);
+    // Fallback to timestamp-based ID
+    return `PR-${Date.now().toString().slice(-5)}`;
+  }
+};
 
 // Column Indices for LIFT-ACCOUNTS (0-based) - R is 17
 const BILL_COPY_COL = 17;
@@ -462,7 +495,49 @@ export default function ReceiptCheck() {
 
       await supabase.from('accounts').insert([accountsPayload]);
       // ---------------------------------------------------
-  
+
+      // --- Auto-create Purchase Return if Physical Condition is Poor/Damaged ---
+      const conditionLower = (formData.physicalCondition || "").toLowerCase().trim();
+      if (POOR_CONDITIONS.includes(conditionLower)) {
+        try {
+          const purchaseReturnNo = await generatePurchaseReturnNo();
+          const purchaseReturnPayload = {
+            "Time Stamp": timestamp,
+            "Purchase Return No.": purchaseReturnNo,
+            "Po No.": selectedLift.indentNo || "",
+            "Action Type": "Physical Condition Return",
+            "Party Name": selectedLift.vendorName || "",
+            "Product Name": selectedLift.rawMaterialName || "",
+            "Qty": parseFloat(formData.actualQuantity) || 0,
+            "Return Reason": `Physical Condition: ${formData.physicalCondition}. Moisture: ${formData.moisture || "N/A"}`,
+            "Org. Bill No": selectedLift.billNo || "",
+            "Lift No": selectedLift.liftNo || selectedLift.id || "",
+            "Return Qty": parseFloat(formData.actualQuantity) || 0,
+            "Firm Name": selectedLift.firmName || "",
+          };
+
+          const { error: prError } = await supabase
+            .from(PURCHASE_RETURNS_TABLE)
+            .insert([purchaseReturnPayload]);
+
+          if (prError) {
+            console.error("Failed to auto-create Purchase Return:", prError);
+            toast.warning("Receipt saved, but Purchase Return auto-creation failed.", {
+              description: prError.message,
+              duration: 6000,
+            });
+          } else {
+            toast.info(`Purchase Return ${purchaseReturnNo} created automatically`, {
+              description: `Physical condition '${formData.physicalCondition}' triggered an automatic return entry.`,
+              duration: 6000,
+            });
+          }
+        } catch (prErr) {
+          console.error("Purchase Return auto-creation error:", prErr);
+        }
+      }
+      // -----------------------------------------------------------------------
+
       toast.success("Success!", { id: "receipt-submit", description: `Receipt for Lift ID ${selectedLift.id} recorded successfully.` });
       setRefreshTrigger(prev => prev + 1);
       handleModalClose();
@@ -848,6 +923,14 @@ export default function ReceiptCheck() {
                 </SelectContent>
               </Select>
               {formErrors.physicalCondition && <p className="text-red-500 text-xs mt-1">{formErrors.physicalCondition}</p>}
+              {POOR_CONDITIONS.includes((formData.physicalCondition || "").toLowerCase()) && (
+                <div className="mt-2 flex items-start gap-2 rounded-md border border-orange-300 bg-orange-50 px-3 py-2">
+                  <span className="text-orange-500 text-sm mt-0.5">⚠️</span>
+                  <p className="text-xs text-orange-700 font-medium">
+                    A <strong>Purchase Return</strong> entry will be automatically created upon submission due to poor/damaged physical condition.
+                  </p>
+                </div>
+              )}
             </div>
             <div>
               <Label htmlFor="moisture" className="block text-sm font-medium text-gray-700">

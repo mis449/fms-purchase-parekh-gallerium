@@ -7,19 +7,21 @@ import { supabase } from "../lib/supabase";
  * @param {string} bucket - The Supabase storage bucket name.
  * @returns {Promise<{url: string}>} - An object containing the public URL.
  */
-export const uploadFileToStorage = async (file, type, bucket = "image_bucket") => {
+export const uploadFileToStorage = async (file, bucket = "image_bucket") => {
   if (!file) return { url: "" };
 
   const fileExt = file.name.split(".").pop();
   const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`;
   const filePath = `${fileName}`;
 
+  console.log("Attempting upload to bucket:", bucket, "path:", filePath);
+
   const { error } = await supabase.storage
     .from(bucket)
     .upload(filePath, file);
 
   if (error) {
-    console.error("Storage upload error:", error);
+    console.error("Supabase Storage Error Details:", error);
     throw error;
   }
 

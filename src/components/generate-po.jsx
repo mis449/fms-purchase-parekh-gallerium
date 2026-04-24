@@ -504,7 +504,7 @@ export default function CreatePO() {
         `PO-${formData.poNumber.replace(/\//g, "-")}.pdf`,
         { type: "application/pdf" },
       );
-      const { url } = await uploadFileToStorage(file, "image", "image_bucket");
+      const { url } = await uploadFileToStorage(file, "image_bucket");
       const now = new Date();
       const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
       
@@ -632,35 +632,6 @@ export default function CreatePO() {
 
         <form onSubmit={handleSubmit} className="flex flex-col items-center">
           <div className="w-full p-4 space-y-4 bg-white rounded-sm shadow-md">
-            {user?.firmName === "all" && (
-              <div className="flex flex-col items-center justify-center p-4 mb-4 border rounded-md bg-blue-50/50 border-primary/20">
-                <Label className="mb-2 text-lg font-bold text-primary">Choose Firm for PO</Label>
-                <div className="w-full max-w-md">
-                  <Select
-                    value={selectedFirm?.id || ""}
-                    onValueChange={(value) => {
-                      const firm = firms.find((f) => f.id === value);
-                      setSelectedFirm(firm);
-                      resetForm();
-                    }}
-                  >
-                    <SelectTrigger className="w-full h-12 text-lg bg-white border-2 border-primary/30">
-                      <SelectValue placeholder="Select the firm to generate PO for" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {firms.map((f) => (
-                        <SelectItem key={f.id} value={f.id}>
-                          {f.firm_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {!selectedFirm && (
-                  <p className="mt-2 text-sm text-red-500 font-medium">Please select a firm before proceeding</p>
-                )}
-              </div>
-            )}
 
             <div className="flex items-center justify-center gap-6 p-4 rounded">
               <img src={companyLogo} alt="Company Logo" className="h-44 w-44 object-contain rounded" />
