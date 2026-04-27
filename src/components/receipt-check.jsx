@@ -592,6 +592,12 @@ export default function ReceiptCheck() {
 
   const renderCell = (item, column) => {
     const value = item[column.dataKey];
+
+    // Format date columns
+    if (["plannedDate_formatted", "dateOfReceiving_formatted", "actual1Timestamp"].includes(column.dataKey)) {
+        return <span className="text-xs">{formatDateString(value)}</span>;
+    }
+
     if (column.isLink) {
         return value && String(value).startsWith("http") ? (
           <a href={value} target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:text-purple-800 hover:underline inline-flex items-center text-xs">

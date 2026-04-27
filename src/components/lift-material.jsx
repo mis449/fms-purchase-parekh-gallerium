@@ -589,6 +589,12 @@ export default function LiftMaterial() {
 
   const renderCell = (item, column) => {
     const value = item[column.dataKey]
+    
+    // Format timestamp columns
+    if (column.dataKey === "planned" || column.dataKey === "createdAt") {
+      return <span className="text-xs">{formatTimestamp(value)}</span>;
+    }
+
     if (column.isLink) {
       return value ? (
         <a
