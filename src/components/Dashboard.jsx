@@ -340,6 +340,15 @@ export default function Dashboard() {
 const pendingStagesData = useMemo(() => {
   const pendingCounts = []
 
+  // Create helper sets for cross-table completion checks
+  const completedIndentPoRlNos = new Set(
+    filteredIndentPoData.filter(po => po.actualAO).map(po => po.rlNo)
+  );
+  
+  const completedLiftAccountRlNos = new Set(
+    filteredLiftAccountData.filter(lift => lift.actualBB).map(lift => lift.rlNo)
+  );
+
   // Hardcoded stage names mapping
   const stageNames = {
     indentPo: {
@@ -364,74 +373,79 @@ const pendingStagesData = useMemo(() => {
   }
 
   // --- INDENT-PO Waterfall ---
-  // Stage 1: Indent Approval (M)
   pendingCounts.push({
     stageName: stageNames.indentPo.M,
     pendingCount: filteredIndentPoData.filter(po => !po.actualM).length
   });
-  // Stage 2: Generate PO (S) - previous stage (M) must be complete
   pendingCounts.push({
     stageName: stageNames.indentPo.S,
     pendingCount: filteredIndentPoData.filter(po => po.actualM && !po.actualS).length
   });
-  // Stage 3: PO Entry In Tally (AL)
   pendingCounts.push({
     stageName: stageNames.indentPo.AL,
     pendingCount: filteredIndentPoData.filter(po => po.actualS && !po.actualAL).length
   });
-  // Stage 4: Get Lift (AO)
   pendingCounts.push({
     stageName: stageNames.indentPo.AO,
     pendingCount: filteredIndentPoData.filter(po => po.actualAL && !po.actualAO).length
   });
 
-  // --- LIFT-ACCOUNTS Waterfall ---
-  // Stage 1: Receipt (U)
+  // --- LIFT-ACCOUNTS Waterfall (Starts after INDENT-PO is done) ---
   pendingCounts.push({
     stageName: stageNames.liftAccounts.U,
-    pendingCount: filteredLiftAccountData.filter(lift => !lift.actualU).length
+    pendingCount: filteredLiftAccountData.filter(lift => 
+      completedIndentPoRlNos.has(lift.rlNo) && !lift.actualU
+    ).length
   });
-  // Stage 2: Bilty (AE)
   pendingCounts.push({
     stageName: stageNames.liftAccounts.AE,
-    pendingCount: filteredLiftAccountData.filter(lift => lift.actualU && !lift.actualAE).length
+    pendingCount: filteredLiftAccountData.filter(lift => 
+      lift.actualU && !lift.actualAE
+    ).length
   });
-  // Stage 3: Lab (AJ)
   pendingCounts.push({
     stageName: stageNames.liftAccounts.AJ,
-    pendingCount: filteredLiftAccountData.filter(lift => lift.actualAE && !lift.actualAJ).length
+    pendingCount: filteredLiftAccountData.filter(lift => 
+      lift.actualAE && !lift.actualAJ
+    ).length
   });
-  // Stage 4: Final Tally (BB)
   pendingCounts.push({
     stageName: stageNames.liftAccounts.BB,
-    pendingCount: filteredLiftAccountData.filter(lift => lift.actualAJ && !lift.actualBB).length
+    pendingCount: filteredLiftAccountData.filter(lift => 
+      lift.actualAJ && !lift.actualBB
+    ).length
   });
 
-  // --- ACCOUNTS Waterfall ---
-  // Stage 1: Rectify (AA)
+  // --- ACCOUNTS Waterfall (Starts after LIFT-ACCOUNTS is done) ---
   pendingCounts.push({
     stageName: stageNames.accounts.AA,
-    pendingCount: allAccountsData.filter(acc => !acc.actualAA).length
+    pendingCount: allAccountsData.filter(acc => 
+      completedLiftAccountRlNos.has(acc.rlNo) && !acc.actualAA
+    ).length
   });
-  // Stage 2: Audit (AF)
   pendingCounts.push({
     stageName: stageNames.accounts.AF,
-    pendingCount: allAccountsData.filter(acc => acc.actualAA && !acc.actualAF).length
+    pendingCount: allAccountsData.filter(acc => 
+      acc.actualAA && !acc.actualAF
+    ).length
   });
-  // Stage 3: Rectify 2 (AK)
   pendingCounts.push({
     stageName: stageNames.accounts.AK,
-    pendingCount: allAccountsData.filter(acc => acc.actualAF && !acc.actualAK).length
+    pendingCount: allAccountsData.filter(acc => 
+      acc.actualAF && !acc.actualAK
+    ).length
   });
-  // Stage 4: Tally entry (AP)
   pendingCounts.push({
     stageName: stageNames.accounts.AP,
-    pendingCount: allAccountsData.filter(acc => acc.actualAK && !acc.actualAP).length
+    pendingCount: allAccountsData.filter(acc => 
+      acc.actualAK && !acc.actualAP
+    ).length
   });
-  // Stage 5: Auditing again (AU)
   pendingCounts.push({
     stageName: stageNames.accounts.AU,
-    pendingCount: allAccountsData.filter(acc => acc.actualAP && !acc.actualAU).length
+    pendingCount: allAccountsData.filter(acc => 
+      acc.actualAP && !acc.actualAU
+    ).length
   });
 
   return pendingCounts
