@@ -10,7 +10,6 @@ import {
   RefreshCw,
   X,
   CalendarIcon,
-  List,
   Filter,
   TrendingUp,
   Package,
@@ -167,7 +166,6 @@ export default function Dashboard() {
     accounts: {}
   })
   const [activeTab, setActiveTab] = useState("overview")
-  const [purchaseSubTab, setPurchaseSubTab] = useState("pending-lift")
   const { user, allowedSteps } = useAuth()
 
   // --- Filter States ---
@@ -209,7 +207,7 @@ export default function Dashboard() {
         vendorName: row["Vendor"] || row["Vendor name"] || row["Vendor Name"],
         material: row["Material"] || row["Product Select"],
         poQty: Number.parseFloat(row["Total Quantity"] || row["Total PO Qty"]) || 0,
-        poTimestamp: row["Timestamp 2"],
+        poTimestamp: row["Actual2"],
         pendingQty: Number.parseFloat(row["Pending Qty"] || row["Balance Quantity"]) || 0,
         notes: row["Notes"] || row["PO Notes"],
         actualM: row["Actual1"],
@@ -257,6 +255,15 @@ export default function Dashboard() {
         processedLiftAccountData = processedLiftAccountData.filter(
           (lift) => lift.firmName && String(lift.firmName).toLowerCase() === userFirmNameLower,
         )
+
+        // Filter accounts by checking if they relate to a firm-filtered indent or lift
+        processedAccountsData = processedAccountsData.filter((acc) => {
+          const indentMatch = processedIndentPoData.find((p) => p.rlNo === acc.rlNo)
+          if (indentMatch) return true
+          const liftMatch = processedLiftAccountData.find((l) => l.rlNo === acc.rlNo)
+          if (liftMatch) return true
+          return false
+        })
       }
 
       setAllPurchaseData(processedIndentPoData)
@@ -356,54 +363,76 @@ const pendingStagesData = useMemo(() => {
     }
   }
 
-  // Count pending for INDENT-PO stages using hardcoded stage names
-  const indentPoStages = [
-    { key: 'actualM', columnName: 'M' },
-    { key: 'actualS', columnName: 'S' },
-    { key: 'actualAL', columnName: 'AL' },
-    { key: 'actualAO', columnName: 'AO' },
-  ]
+  // --- INDENT-PO Waterfall ---
+  // Stage 1: Indent Approval (M)
+  pendingCounts.push({
+    stageName: stageNames.indentPo.M,
+    pendingCount: filteredIndentPoData.filter(po => !po.actualM).length
+  });
+  // Stage 2: Generate PO (S) - previous stage (M) must be complete
+  pendingCounts.push({
+    stageName: stageNames.indentPo.S,
+    pendingCount: filteredIndentPoData.filter(po => po.actualM && !po.actualS).length
+  });
+  // Stage 3: PO Entry In Tally (AL)
+  pendingCounts.push({
+    stageName: stageNames.indentPo.AL,
+    pendingCount: filteredIndentPoData.filter(po => po.actualS && !po.actualAL).length
+  });
+  // Stage 4: Get Lift (AO)
+  pendingCounts.push({
+    stageName: stageNames.indentPo.AO,
+    pendingCount: filteredIndentPoData.filter(po => po.actualAL && !po.actualAO).length
+  });
 
-  indentPoStages.forEach(({ key, columnName }) => {
-    const pendingCount = filteredIndentPoData.filter(po => !po[key] || po[key] === null || po[key] === '').length
-    pendingCounts.push({
-      stageName: stageNames.indentPo[columnName],
-      pendingCount: pendingCount
-    })
-  })
+  // --- LIFT-ACCOUNTS Waterfall ---
+  // Stage 1: Receipt (U)
+  pendingCounts.push({
+    stageName: stageNames.liftAccounts.U,
+    pendingCount: filteredLiftAccountData.filter(lift => !lift.actualU).length
+  });
+  // Stage 2: Bilty (AE)
+  pendingCounts.push({
+    stageName: stageNames.liftAccounts.AE,
+    pendingCount: filteredLiftAccountData.filter(lift => lift.actualU && !lift.actualAE).length
+  });
+  // Stage 3: Lab (AJ)
+  pendingCounts.push({
+    stageName: stageNames.liftAccounts.AJ,
+    pendingCount: filteredLiftAccountData.filter(lift => lift.actualAE && !lift.actualAJ).length
+  });
+  // Stage 4: Final Tally (BB)
+  pendingCounts.push({
+    stageName: stageNames.liftAccounts.BB,
+    pendingCount: filteredLiftAccountData.filter(lift => lift.actualAJ && !lift.actualBB).length
+  });
 
-  // Count pending for LIFT-ACCOUNTS stages using hardcoded stage names
-  const liftAccountsStages = [
-    { key: 'actualU', columnName: 'U' },
-    { key: 'actualAE', columnName: 'AE' },
-    { key: 'actualAJ', columnName: 'AJ' },
-    { key: 'actualBB', columnName: 'BB' },
-  ]
-
-  liftAccountsStages.forEach(({ key, columnName }) => {
-    const pendingCount = filteredLiftAccountData.filter(lift => !lift[key] || lift[key] === null || lift[key] === '').length
-    pendingCounts.push({
-      stageName: stageNames.liftAccounts[columnName],
-      pendingCount: pendingCount
-    })
-  })
-
-  // Count pending for ACCOUNTS stages using hardcoded stage names
-  const accountsStages = [
-    { key: 'actualAA', columnName: 'AA' },
-    { key: 'actualAF', columnName: 'AF' },
-    { key: 'actualAK', columnName: 'AK' },
-    { key: 'actualAP', columnName: 'AP' },
-    { key: 'actualAU', columnName: 'AU' },
-  ]
-
-  accountsStages.forEach(({ key, columnName }) => {
-    const pendingCount = allAccountsData.filter(account => !account[key] || account[key] === null || account[key] === '').length
-    pendingCounts.push({
-      stageName: stageNames.accounts[columnName],
-      pendingCount: pendingCount
-    })
-  })
+  // --- ACCOUNTS Waterfall ---
+  // Stage 1: Rectify (AA)
+  pendingCounts.push({
+    stageName: stageNames.accounts.AA,
+    pendingCount: allAccountsData.filter(acc => !acc.actualAA).length
+  });
+  // Stage 2: Audit (AF)
+  pendingCounts.push({
+    stageName: stageNames.accounts.AF,
+    pendingCount: allAccountsData.filter(acc => acc.actualAA && !acc.actualAF).length
+  });
+  // Stage 3: Rectify 2 (AK)
+  pendingCounts.push({
+    stageName: stageNames.accounts.AK,
+    pendingCount: allAccountsData.filter(acc => acc.actualAF && !acc.actualAK).length
+  });
+  // Stage 4: Tally entry (AP)
+  pendingCounts.push({
+    stageName: stageNames.accounts.AP,
+    pendingCount: allAccountsData.filter(acc => acc.actualAK && !acc.actualAP).length
+  });
+  // Stage 5: Auditing again (AU)
+  pendingCounts.push({
+    stageName: stageNames.accounts.AU,
+    pendingCount: allAccountsData.filter(acc => acc.actualAP && !acc.actualAU).length
+  });
 
   return pendingCounts
 }, [filteredIndentPoData, filteredLiftAccountData, allAccountsData])
@@ -425,15 +454,16 @@ const pendingStagesData = useMemo(() => {
     const poQuantityByStatus = { Completed: 0, Pending: 0 }
 
     const uniquePOsByRlNo = new Set()
+    const pendingPoRlNos = new Set()
+    const completedPoRlNos = new Set()
 
     filteredIndentPoData.forEach((po) => {
       uniquePOsByRlNo.add(po.rlNo)
 
-      const isPoPendingForKPI = !po.poTimestamp
-      if (isPoPendingForKPI) {
-        kpis.pendingPOs += 1
+      if (!po.poTimestamp) {
+        pendingPoRlNos.add(po.rlNo)
       } else {
-        kpis.completedPOs += 1
+        completedPoRlNos.add(po.rlNo)
       }
 
       const isMaterialLiftComplete = po.pendingQty === 0
@@ -458,6 +488,8 @@ const pendingStagesData = useMemo(() => {
     })
 
     kpis.totalPOs = uniquePOsByRlNo.size
+    kpis.pendingPOs = pendingPoRlNos.size
+    kpis.completedPOs = completedPoRlNos.size
 
     filteredLiftAccountData.forEach((lift) => {
       kpis.totalReceivedQuantity += lift.receivedQty
@@ -493,14 +525,7 @@ const pendingStagesData = useMemo(() => {
     }
   }, [filteredIndentPoData, filteredLiftAccountData])
 
-  // --- Data for Purchase Tab Tables ---
-  const purchaseTabTables = useMemo(() => {
-    const pendingLift = filteredIndentPoData.filter((po) => po.materialLiftStatus === "Pending")
-    const inTransit = filteredLiftAccountData.filter((lift) => !lift.receivedTimestamp)
-    const received = filteredLiftAccountData.filter((lift) => lift.receivedTimestamp)
 
-    return { pendingLift, inTransit, received }
-  }, [filteredIndentPoData, filteredLiftAccountData])
 
   const handleFilterChange = (key, value) => {
     setFilters((prev) => ({ ...prev, [key]: value }))
@@ -693,18 +718,14 @@ const pendingStagesData = useMemo(() => {
         </Card>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 max-w-lg mx-auto mb-6 bg-white border border-gray-200 rounded-lg shadow-sm p-1">
+          <TabsList className="grid w-full grid-cols-2 max-w-lg mx-auto mb-6 bg-white border border-gray-200 rounded-lg shadow-sm p-1">
             <TabsTrigger value="overview" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
               <TrendingUp className="h-5 w-5" />
               Overview
             </TabsTrigger>
-            <TabsTrigger value="purchase" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
-              <List className="h-5 w-5" />
-              Purchase Data
-            </TabsTrigger>
             <TabsTrigger value="pending" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
               <AlertTriangle className="h-5 w-5" />
-              Pending
+              Pending Stages
             </TabsTrigger>
           </TabsList>
 
@@ -751,7 +772,7 @@ const pendingStagesData = useMemo(() => {
               </Card>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 gap-6">
               <Card className="shadow-sm border-gray-200">
                 <CardContent className="p-6 text-center">
                   <div className="p-3 bg-purple-100 rounded-full inline-block mb-2">
@@ -760,28 +781,6 @@ const pendingStagesData = useMemo(() => {
                   <p className="text-sm font-semibold text-gray-600">Total PO Quantity</p>
                   <p className="text-2xl font-bold text-purple-600">
                     {overviewData.kpis.totalPoQuantity.toLocaleString()}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-sm border-gray-200">
-                <CardContent className="p-6 text-center">
-                  <div className="p-3 bg-orange-100 rounded-full inline-block mb-2">
-                    <Clock className="h-6 w-6 text-orange-600" />
-                  </div>
-                  <p className="text-sm font-semibold text-gray-600">Pending Quantity</p>
-                  <p className="text-2xl font-bold text-orange-600">
-                    {overviewData.kpis.totalPendingQuantity.toLocaleString()}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card className="shadow-sm border-gray-200">
-                <CardContent className="p-6 text-center">
-                  <div className="p-3 bg-emerald-100 rounded-full inline-block mb-2">
-                    <CheckCircle2 className="h-6 w-6 text-emerald-600" />
-                  </div>
-                  <p className="text-sm font-semibold text-gray-600">Received Quantity</p>
-                  <p className="text-2xl font-bold text-emerald-600">
-                    {overviewData.kpis.totalReceivedQuantity.toLocaleString()}
                   </p>
                 </CardContent>
               </Card>
@@ -875,177 +874,7 @@ const pendingStagesData = useMemo(() => {
             </div>
           </TabsContent>
 
-          <TabsContent value="purchase" className="w-full space-y-6">
-            <Tabs value={purchaseSubTab} onValueChange={setPurchaseSubTab}>
-              <TabsList className="grid w-full grid-cols-3 max-w-xl mx-auto mb-4 bg-white border border-gray-200 rounded-lg shadow-sm p-1">
-                <TabsTrigger value="pending-lift" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
-                  <Hourglass className="h-5 w-5" />
-                  Pending POs
-                </TabsTrigger>
-                <TabsTrigger value="in-transit" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
-                  <Truck className="h-5 w-5" />
-                  In-Transit
-                </TabsTrigger>
-                <TabsTrigger value="received" className="flex-grow flex items-center justify-center gap-2 p-3 text-base data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:shadow-md rounded-md transition-all duration-200 hover:bg-gray-100">
-                  <CheckCircle2 className="h-5 w-5" />
-                  Received
-                </TabsTrigger>
-              </TabsList>
 
-              <TabsContent value="pending-lift" className="space-y-4">
-                <Card className="shadow-md border-gray-200">
-                  <CardHeader className="p-4 border-b border-gray-200">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Hourglass className="h-5 w-5 text-amber-600" />
-                      Purchase Orders Pending Lift ({purchaseTabTables.pendingLift.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-gray-50 hover:bg-gray-50">
-                            <TableHead className="font-bold text-gray-600 py-2 px-3">Indent No.</TableHead>
-                            <TableHead className="font-bold text-gray-600">PO Date</TableHead>
-                            <TableHead className="font-bold text-gray-600">Firm Name</TableHead>
-                            <TableHead className="font-bold text-gray-600">Vendor</TableHead>
-                            <TableHead className="font-bold text-gray-600">Material</TableHead>
-                            <TableHead className="text-right font-bold text-gray-600">PO Qty</TableHead>
-                            <TableHead className="text-right font-bold text-gray-600">Pending Qty</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {purchaseTabTables.pendingLift.length > 0 ? (
-                            purchaseTabTables.pendingLift.map((po) => (
-                              <TableRow key={po.id} className="hover:bg-amber-50/50">
-                                <TableCell className="font-semibold text-purple-600 py-2 px-3">{po.rlNo}</TableCell>
-                                <TableCell>{po.date ? format(po.date, "dd-MM-yyyy") : "N/A"}</TableCell>
-                                <TableCell>{po.firmName || "N/A"}</TableCell>
-                                <TableCell>{po.vendorName}</TableCell>
-                                <TableCell className="max-w-xs truncate">{po.material}</TableCell>
-                                <TableCell className="text-right font-semibold">{po.poQty.toLocaleString()}</TableCell>
-                                <TableCell className="text-right">
-                                  <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-200 font-semibold">
-                                    {po.pendingQty.toLocaleString()}
-                                  </Badge>
-                                </TableCell>
-                              </TableRow>
-                            ))
-                          ) : (
-                            <TableRow>
-                              <TableCell colSpan={7} className="text-center h-24 text-gray-500">
-                                No purchase orders are currently pending.
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="in-transit" className="space-y-4">
-                <Card className="shadow-md border-gray-200">
-                  <CardHeader className="p-4 border-b border-gray-200">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Truck className="h-5 w-5 text-purple-600" />
-                      Materials In-Transit ({purchaseTabTables.inTransit.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-gray-50 hover:bg-gray-50">
-                            <TableHead className="font-bold text-gray-600 py-2 px-3">Indent No.</TableHead>
-                            <TableHead className="font-bold text-gray-600">Delivery Order</TableHead>
-                            <TableHead className="font-bold text-gray-600">Firm Name</TableHead>
-                            <TableHead className="font-bold text-gray-600">Vendor</TableHead>
-                            <TableHead className="font-bold text-gray-600">Material</TableHead>
-                            <TableHead className="text-right font-bold text-gray-600">Lifted Qty</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {purchaseTabTables.inTransit.length > 0 ? (
-                            purchaseTabTables.inTransit.map((lift) => (
-                              <TableRow key={lift.id} className="hover:bg-purple-50/50">
-                                <TableCell className="font-semibold text-purple-600 py-2 px-3">{lift.rlNo}</TableCell>
-                                <TableCell>{lift.deliveryOrderNo || "N/A"}</TableCell>
-                                <TableCell>{lift.firmName || "N/A"}</TableCell>
-                                <TableCell>{lift.vendorName}</TableCell>
-                                <TableCell className="max-w-xs truncate">{lift.material}</TableCell>
-                                <TableCell className="text-right font-semibold">{lift.liftedQty.toLocaleString()}</TableCell>
-                              </TableRow>
-                            ))
-                          ) : (
-                            <TableRow>
-                              <TableCell colSpan={6} className="text-center h-24 text-gray-500">
-                                No materials are currently in transit.
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-
-              <TabsContent value="received" className="space-y-4">
-                <Card className="shadow-md border-gray-200">
-                  <CardHeader className="p-4 border-b border-gray-200">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-                      Received Materials ({purchaseTabTables.received.length})
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-gray-50 hover:bg-gray-50">
-                            <TableHead className="font-bold text-gray-600 py-2 px-3">Indent No.</TableHead>
-                            <TableHead className="font-bold text-gray-600">Firm Name</TableHead>
-                            <TableHead className="font-bold text-gray-600">Vendor</TableHead>
-                            <TableHead className="font-bold text-gray-600">Material</TableHead>
-                            <TableHead className="font-bold text-gray-600">Notes</TableHead>
-                            <TableHead className="text-right font-bold text-gray-600">Lifted Qty</TableHead>
-                            <TableHead className="text-right font-bold text-gray-600">Received Qty</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {purchaseTabTables.received.length > 0 ? (
-                            purchaseTabTables.received.map((lift) => (
-                              <TableRow key={lift.id} className="hover:bg-emerald-50/50">
-                                <TableCell className="font-semibold text-purple-600 py-2 px-3">{lift.rlNo}</TableCell>
-                                <TableCell>{lift.firmName || "N/A"}</TableCell>
-                                <TableCell>{lift.vendorName}</TableCell>
-                                <TableCell className="max-w-xs truncate">{lift.material}</TableCell>
-                                <TableCell className="max-w-xs truncate">{lift.notes || "N/A"}</TableCell>
-                                <TableCell className="text-right font-semibold">{lift.liftedQty.toLocaleString()}</TableCell>
-                                <TableCell className="text-right">
-                                  <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 font-semibold">
-                                    {lift.receivedQty.toLocaleString()}
-                                  </Badge>
-                                </TableCell>
-                              </TableRow>
-                            ))
-                          ) : (
-                            <TableRow>
-                              <TableCell colSpan={7} className="text-center h-24 text-gray-500">
-                                No materials have been recorded as received.
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  </CardContent>
-                </Card>
-              </TabsContent>
-            </Tabs>
-          </TabsContent>
 
           <TabsContent value="pending" className="w-full space-y-6">
             <Card className="shadow-md border-gray-200">
