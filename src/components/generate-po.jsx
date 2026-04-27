@@ -640,9 +640,9 @@ export default function CreatePO() {
                   {selectedFirm?.firm_name || "PAREKH GALLERIUM"}
                 </h1>
                 <p className="text-sm font-medium text-muted-foreground">
-                  {selectedFirm?.address || "Shri Ram Business Park , Block - C, 2nd floor , Room No. 212"}
+                  {selectedFirm?.address || "New Dhamtari Rd, RishabhNagar and Pawan Vihar Colony, Pachpedi Naka, Raipur, Tikrapara, Chhattisgarh 492001"}
                 </p>
-                <p className="text-sm font-semibold text-primary/80">Phone No: {selectedFirm?.phone || "+91 7223844007"}</p>
+                <p className="text-sm font-semibold text-primary/80">Phone No: {selectedFirm?.phone || "+91 8435856151"}</p>
               </div>
             </div>
 
